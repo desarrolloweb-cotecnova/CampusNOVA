@@ -48,9 +48,12 @@ export async function getAssuranceLevel() {
  * - 'enroll' → no tiene factor, debe configurarlo.
  */
 export async function getMfaState(): Promise<MfaState> {
-  const aal = await getAssuranceLevel();
+  // Ambas consultas en paralelo para ahorrar una ida y vuelta a la red.
+  const [aal, verified] = await Promise.all([
+    getAssuranceLevel(),
+    listVerifiedTotpFactors(),
+  ]);
   if (aal?.currentLevel === 'aal2') return 'ok';
-  const verified = await listVerifiedTotpFactors();
   return verified.length > 0 ? 'verify' : 'enroll';
 }
 

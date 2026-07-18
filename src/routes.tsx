@@ -3,6 +3,7 @@ import { lazy, type ReactNode } from 'react';
 // descarga tras el redirect de Google, acelerando la carga del panel.
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const AuthCallbackPage = lazy(() => import('./pages/AuthCallbackPage'));
 const DashboardPage = lazy(() => import('./pages/panel/DashboardPage'));
 const ActivosFijosPage = lazy(() => import('./pages/panel/ActivosFijosPage'));
 const GestionActivosPage = lazy(() => import('./pages/panel/GestionActivosPage'));
@@ -43,6 +44,7 @@ export const routes: RouteConfig[] = [
   // Páginas públicas
   { name: 'Inicio', path: '/', element: <LandingPage />, public: true },
   { name: 'Iniciar Sesión', path: '/login', element: <LoginPage />, public: true },
+  { name: 'Callback', path: '/auth/callback', element: <AuthCallbackPage />, public: true },
   { name: 'Reportar Novedad', path: '/reportar-novedad', element: <ReportarNovedadPage />, public: true },
   { name: 'Solicitar Espacio', path: '/solicitar-espacio', element: <SolicitarEspacioPage />, public: true },
   { name: 'Calendario', path: '/calendario', element: <CalendarioPage />, public: true },
