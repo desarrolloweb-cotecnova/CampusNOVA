@@ -4,11 +4,19 @@ import { supabase } from '@/db/supabase';
 
 export interface TotpEnrollment {
   factorId: string;
-  /** URI otpauth:// para generar el QR (compatible con Google Authenticator). */
+  /** SVG (data URI) del código QR generado por Supabase. */
+  qrCode: string;
+  /** URI otpauth:// (por si se quiere generar el QR manualmente). */
   uri: string;
   /** Secreto en texto para ingreso manual si no se puede escanear el QR. */
   secret: string;
 }
+
+/** Estado del segundo factor para la sesión actual. */
+export type MfaState =
+  | 'ok'       // sesión ya en AAL2 (2FA verificado)
+  | 'verify'   // tiene factor verificado pero falta el reto (AAL1 -> AAL2)
+  | 'enroll';  // no tiene factor: debe configurarlo (2FA obligatorio)
 
 /** Devuelve los factores TOTP ya verificados del usuario actual. */
 export async function listVerifiedTotpFactors() {
@@ -20,45 +28,41 @@ export async function listVerifiedTotpFactors() {
 /** true si el usuario tiene al menos un factor TOTP verificado. */
 export async function hasVerifiedTotp(): Promise<boolean> {
   try {
-    const factors = await listVerifiedTotpFactors();
-    return factors.length > 0;
+    return (await listVerifiedTotpFactors()).length > 0;
   } catch {
     return false;
   }
 }
 
-/**
- * Nivel de garantía de autenticación (AAL).
- * - currentLevel 'aal1' + nextLevel 'aal2'  → el usuario tiene 2FA y debe completarlo.
- * - currentLevel 'aal2'                      → ya pasó el 2FA en esta sesión.
- */
+/** Nivel de garantía de autenticación (AAL) de la sesión. */
 export async function getAssuranceLevel() {
   const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (error) throw error;
   return data; // { currentLevel, nextLevel, currentAuthenticationMethods }
 }
 
-/** true si la sesión requiere completar el reto TOTP para alcanzar AAL2. */
-export async function needsMfaChallenge(): Promise<boolean> {
-  try {
-    const aal = await getAssuranceLevel();
-    return aal?.currentLevel === 'aal1' && aal?.nextLevel === 'aal2';
-  } catch {
-    return false;
-  }
+/**
+ * Determina qué debe pasar con el 2FA en esta sesión (2FA obligatorio):
+ * - 'ok'     → ya está en AAL2.
+ * - 'verify' → tiene factor verificado, falta introducir el código.
+ * - 'enroll' → no tiene factor, debe configurarlo.
+ */
+export async function getMfaState(): Promise<MfaState> {
+  const aal = await getAssuranceLevel();
+  if (aal?.currentLevel === 'aal2') return 'ok';
+  const verified = await listVerifiedTotpFactors();
+  return verified.length > 0 ? 'verify' : 'enroll';
 }
 
 /**
  * Inicia el enrolamiento de un nuevo factor TOTP.
- * Devuelve el URI para el QR y el secreto para ingreso manual.
+ * Limpia antes los factores sin verificar para evitar duplicados.
  */
 export async function enrollTotp(friendlyName = 'CampusNOVA'): Promise<TotpEnrollment> {
-  // Limpia posibles factores previos "unverified" con el mismo nombre para evitar
-  // el error "friendly name already exists".
   try {
     const { data: existing } = await supabase.auth.mfa.listFactors();
     const stale = (existing?.all ?? []).filter(
-      f => f.status === 'unverified',
+      f => f.factor_type === 'totp' && f.status !== 'verified',
     );
     for (const f of stale) {
       await supabase.auth.mfa.unenroll({ factorId: f.id });
@@ -74,37 +78,22 @@ export async function enrollTotp(friendlyName = 'CampusNOVA'): Promise<TotpEnrol
   if (error) throw error;
   return {
     factorId: data.id,
+    qrCode: data.totp.qr_code,
     uri: data.totp.uri,
     secret: data.totp.secret,
   };
 }
 
-/** Verifica el código de 6 dígitos para completar el enrolamiento del factor. */
-export async function verifyEnrollment(factorId: string, code: string) {
-  const { data: challenge, error: challengeError } =
-    await supabase.auth.mfa.challenge({ factorId });
-  if (challengeError) throw challengeError;
-
-  const { error: verifyError } = await supabase.auth.mfa.verify({
+/**
+ * Reta y verifica un código TOTP en un solo paso.
+ * Sirve tanto para completar el enrolamiento como para elevar la sesión a AAL2.
+ */
+export async function challengeAndVerify(factorId: string, code: string) {
+  const { error } = await supabase.auth.mfa.challengeAndVerify({
     factorId,
-    challengeId: challenge.id,
     code: code.trim(),
   });
-  if (verifyError) throw verifyError;
-}
-
-/** Reto TOTP en el login: eleva la sesión a AAL2 con el código del autenticador. */
-export async function verifyLoginChallenge(factorId: string, code: string) {
-  const { data: challenge, error: challengeError } =
-    await supabase.auth.mfa.challenge({ factorId });
-  if (challengeError) throw challengeError;
-
-  const { error: verifyError } = await supabase.auth.mfa.verify({
-    factorId,
-    challengeId: challenge.id,
-    code: code.trim(),
-  });
-  if (verifyError) throw verifyError;
+  if (error) throw error;
 }
 
 /** Elimina (desactiva) un factor TOTP. */

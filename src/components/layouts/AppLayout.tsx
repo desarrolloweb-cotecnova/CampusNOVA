@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, Building2, AlertTriangle, Calendar,
   Settings, User, LogOut, Menu, X, ChevronDown, ChevronRight,
-  Bell, Search, UserCheck
+  Bell, Search, UserCheck, ShieldCheck
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -14,10 +14,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
-import { needsMfaChallenge } from '@/lib/mfa';
-import { MfaChallenge } from '@/components/auth/MfaChallenge';
+import { MfaGuard } from '@/components/auth/MfaGuard';
 
 import { LOGO_URL } from '@/lib/assets';
+
+/** Etiquetas legibles de los roles. */
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Administrador',
+  rectoria: 'Rectoría',
+  infraestructura: 'Infraestructura',
+  responsable: 'Responsable',
+};
 
 interface NavItem {
   label: string;
@@ -202,12 +209,9 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { profile, loading, signOut } = useAuth();
+  const { profile, user, loading, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-
-  // Estado del doble factor: null = comprobando, true = requiere reto TOTP
-  const [mfaRequired, setMfaRequired] = useState<boolean | null>(null);
 
   // Redirigir si no hay sesión o si el usuario está inactivo
   useEffect(() => {
@@ -222,17 +226,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [profile, loading, navigate, signOut]);
 
-  // Comprobar si la sesión necesita completar el reto de doble factor (AAL1 -> AAL2)
-  useEffect(() => {
-    let cancelled = false;
-    if (loading || !profile) return;
-    needsMfaChallenge().then(required => {
-      if (!cancelled) setMfaRequired(required);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, profile]);
+  // Avatar: prioriza la foto guardada en el perfil; si no, la de Google.
+  const avatarUrl =
+    profile?.avatar_url ||
+    (user?.user_metadata?.avatar_url as string | undefined) ||
+    (user?.user_metadata?.picture as string | undefined) ||
+    '';
+  const displayName = profile?.nombre || profile?.email?.split('@')[0] || 'Usuario';
 
   if (loading) {
     return (
@@ -243,11 +243,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     );
-  }
-
-  // Bloquear el panel hasta completar el doble factor si la sesión lo requiere
-  if (mfaRequired) {
-    return <MfaChallenge onVerified={() => setMfaRequired(false)} />;
   }
 
   // Get page title from current route
@@ -281,6 +276,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
+    <MfaGuard>
     <div className="flex min-h-screen w-full bg-background">
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex flex-col w-64 shrink-0">
@@ -323,32 +319,37 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="h-9 px-2 flex items-center gap-2 rounded-full hover:bg-accent">
-                    <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center overflow-hidden shrink-0">
-                      {profile?.avatar_url ? (
-                        <img src={profile.avatar_url} alt="Foto de perfil" className="h-full w-full object-cover" />
-                      ) : (
-                        <User className="h-3.5 w-3.5 text-primary-foreground" />
-                      )}
-                    </div>
-                    <span className="text-sm font-medium hidden md:block text-slate-700">
-                      {profile?.nombre || profile?.email?.split('@')[0] || 'Usuario'}
+                  <Button variant="ghost" className="h-9 px-1 pr-2 flex items-center gap-2 rounded-full hover:bg-accent">
+                    <UserAvatar url={avatarUrl} nombre={displayName} />
+                    <span className="text-sm font-medium hidden sm:block text-foreground">
+                      {displayName}
                     </span>
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
-                  <div className="px-2 py-1.5">
-                    <p className="text-sm font-medium">{profile?.nombre || 'Usuario'}</p>
-                    <p className="text-xs text-muted-foreground">{profile?.email}</p>
+                <DropdownMenuContent align="end" className="w-72 p-0">
+                  <div className="flex items-start gap-3 p-4">
+                    <UserAvatar url={avatarUrl} nombre={displayName} size="lg" />
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold">{displayName}</p>
+                      <p className="truncate text-xs text-muted-foreground">{profile?.email}</p>
+                    </div>
                   </div>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => navigate('/panel/perfil')}>
-                    <User className="h-4 w-4 mr-2" /> Mi Perfil
+                  <div className="flex flex-wrap gap-1.5 px-4 pb-3">
+                    <span className="rounded-full bg-secondary/15 text-secondary px-2.5 py-0.5 text-xs font-medium">
+                      {ROLE_LABELS[profile?.role ?? ''] ?? 'Usuario'}
+                    </span>
+                  </div>
+                  <DropdownMenuSeparator className="my-0" />
+                  <DropdownMenuItem onClick={() => navigate('/panel/perfil')} className="px-4 py-2.5">
+                    <User className="h-4 w-4 mr-2 text-muted-foreground" /> Mi perfil
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate('/panel/seguridad')} className="px-4 py-2.5">
+                    <ShieldCheck className="h-4 w-4 mr-2 text-muted-foreground" /> Verificación en dos pasos
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator className="my-0" />
                   <DropdownMenuItem
                     onClick={async () => { await signOut(); navigate('/'); }}
-                    className="text-destructive"
+                    className="px-4 py-2.5 text-destructive focus:text-destructive"
                   >
                     <LogOut className="h-4 w-4 mr-2" /> Cerrar sesión
                   </DropdownMenuItem>
@@ -363,6 +364,42 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+    </div>
+    </MfaGuard>
+  );
+}
+
+/** Avatar circular: imagen de Google/perfil o iniciales de respaldo. */
+function UserAvatar({
+  url,
+  nombre,
+  size = 'md',
+}: {
+  url: string;
+  nombre: string;
+  size?: 'md' | 'lg';
+}) {
+  const cls = size === 'lg' ? 'h-11 w-11' : 'h-8 w-8';
+  const iniciales = nombre
+    .split(' ')
+    .map(p => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={nombre}
+        referrerPolicy="no-referrer"
+        className={cn(cls, 'shrink-0 rounded-full object-cover')}
+      />
+    );
+  }
+  return (
+    <div className={cn(cls, 'flex shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground')}>
+      {iniciales}
     </div>
   );
 }

@@ -6,7 +6,6 @@ import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { uploadImageToCloudinary, getCloudinaryAvatar } from '@/lib/cloudinary';
 import { AppLayout } from '@/components/layouts/AppLayout';
-import { MfaEnrollment } from '@/components/auth/MfaEnrollment';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -541,9 +540,6 @@ export default function PerfilPage() {
             </Button>
           </CardContent>
         </Card>
-
-        {/* ── Card: Doble factor de autenticación (2FA) ───────────────── */}
-        <MfaEnrollment />
       </div>
     </AppLayout>
   );

@@ -26,6 +26,7 @@ import CalendarioPage from './pages/public/CalendarioPage';
 import CalendarioReservasPage from './pages/panel/CalendarioReservasPage';
 import ConfiguracionPage from './pages/panel/ConfiguracionPage';
 import PerfilPage from './pages/panel/PerfilPage';
+import SeguridadPage from './pages/panel/SeguridadPage';
 
 export interface RouteConfig {
   name: string;
@@ -81,6 +82,7 @@ export const routes: RouteConfig[] = [
 
   // Perfil de usuario
   { name: 'Mi Perfil', path: '/panel/perfil', element: <PerfilPage /> },
+  { name: 'Verificación en dos pasos', path: '/panel/seguridad', element: <SeguridadPage /> },
 
   // Módulo 6 — Monitoreo Supabase
   { name: 'Monitoreo Supabase', path: '/panel/admin/configuracion', element: <ConfiguracionPage /> },
