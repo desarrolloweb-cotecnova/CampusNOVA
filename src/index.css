@@ -1,0 +1,220 @@
+/* stylelint-disable */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* CampusNOVA — COTECNOVA Design System */
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+
+    /* COTECNOVA institutional colors */
+    /* Verde institucional #00602F → HSL(149, 100%, 19%) */
+    --primary: 149 100% 19%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Naranja #EE7117 → HSL(27, 88%, 51%) */
+    --secondary: 27 88% 51%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Backgrounds */
+    --background: 0 0% 100%;
+    --foreground: 220 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 20% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 20% 10%;
+
+    --muted: 149 15% 95%;
+    --muted-foreground: 220 10% 46%;
+
+    /* Accent — gris oscuro #525252 */
+    --accent: 149 15% 94%;
+    --accent-foreground: 220 20% 10%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 149 20% 88%;
+    --input: 149 20% 88%;
+    --ring: 149 100% 19%;
+
+    /* Status */
+    --success: 149 100% 19%;
+    --warning: 27 88% 51%;
+    --info: 210 80% 50%;
+    --error: 0 84% 60%;
+
+    /* Charts */
+    --chart-1: 149 100% 19%;
+    --chart-2: 27 88% 51%;
+    --chart-3: 210 80% 50%;
+    --chart-4: 280 65% 55%;
+    --chart-5: 340 75% 50%;
+
+    /* Sidebar — blanco */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 20% 10%;
+    --sidebar-primary: 149 100% 19%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 149 15% 95%;
+    --sidebar-accent-foreground: 220 20% 10%;
+    --sidebar-border: 149 20% 88%;
+    --sidebar-ring: 149 100% 19%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(149, 100%, 19%) 0%, hsl(149, 80%, 28%) 100%);
+    --gradient-card: linear-gradient(135deg, hsl(149, 15%, 97%) 0%, hsl(0, 0%, 100%) 100%);
+    --gradient-hero: linear-gradient(135deg, hsl(149, 100%, 10%) 0%, hsl(149, 80%, 18%) 60%, hsl(27, 88%, 45%) 100%);
+    --gradient-background: linear-gradient(180deg, hsl(149, 15%, 97%) 0%, hsl(0, 0%, 100%) 100%);
+
+    /* Shadows */
+    --shadow-card: 0 2px 8px -2px hsl(149, 40%, 20%, 0.12), 0 1px 3px -1px hsl(149, 40%, 20%, 0.08);
+    --shadow-hover: 0 8px 24px -4px hsl(149, 40%, 20%, 0.20), 0 4px 8px -2px hsl(149, 40%, 20%, 0.12);
+    --shadow-elevated: 0 20px 40px -8px hsl(149, 40%, 20%, 0.25);
+
+    /* Education */
+    --education-blue: 210 80% 50%;
+    --education-green: 149 100% 19%;
+  }
+
+  .dark {
+    --background: 149 30% 6%;
+    --foreground: 0 0% 95%;
+
+    --card: 149 25% 9%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 149 25% 9%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 149 70% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 27 80% 55%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 149 20% 15%;
+    --muted-foreground: 149 10% 64%;
+
+    --accent: 149 20% 14%;
+    --accent-foreground: 0 0% 95%;
+
+    --destructive: 0 62% 40%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 149 20% 18%;
+    --input: 149 20% 18%;
+    --ring: 149 70% 45%;
+
+    --chart-1: 149 70% 45%;
+    --chart-2: 27 80% 55%;
+    --chart-3: 210 70% 55%;
+    --chart-4: 280 60% 60%;
+    --chart-5: 340 70% 55%;
+
+    --sidebar-background: 149 40% 7%;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 27 80% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 149 35% 12%;
+    --sidebar-accent-foreground: 0 0% 90%;
+    --sidebar-border: 149 30% 14%;
+    --sidebar-ring: 149 70% 45%;
+
+    --shadow-card: 0 2px 8px -2px hsl(0, 0%, 0%, 0.30), 0 1px 3px -1px hsl(0, 0%, 0%, 0.20);
+    --shadow-hover: 0 8px 24px -4px hsl(0, 0%, 0%, 0.45), 0 4px 8px -2px hsl(0, 0%, 0%, 0.30);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+}
+
+@layer utilities {
+  .gradient-text {
+    background: var(--gradient-primary);
+    @apply bg-clip-text text-transparent;
+  }
+
+  .gradient-hero {
+    background: var(--gradient-hero);
+  }
+
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+
+  .shadow-hover {
+    box-shadow: var(--shadow-hover);
+  }
+
+  /* Calendar styles */
+  .rbc-calendar {
+    @apply bg-card text-foreground;
+  }
+
+  .rbc-header {
+    @apply border-border text-foreground font-medium py-2;
+  }
+
+  .rbc-day-bg {
+    @apply border-border;
+  }
+
+  .rbc-off-range-bg {
+    @apply bg-muted;
+  }
+
+  .rbc-today {
+    background-color: hsl(var(--primary) / 0.08) !important;
+  }
+
+  .rbc-event {
+    border-radius: 4px !important;
+    font-size: 12px !important;
+    padding: 2px 6px !important;
+  }
+
+  .rbc-toolbar button {
+    @apply border-border text-foreground;
+  }
+
+  .rbc-toolbar button:hover,
+  .rbc-toolbar button.rbc-active {
+    background-color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-foreground)) !important;
+    border-color: hsl(var(--primary)) !important;
+  }
+
+  .rbc-month-row {
+    @apply border-border;
+  }
+
+  .rbc-date-cell {
+    @apply text-foreground text-sm;
+  }
+}

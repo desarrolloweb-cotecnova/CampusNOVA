@@ -1,0 +1,1 @@
+ALTER TABLE novedades_incidentes ADD COLUMN IF NOT EXISTS telefono_reportante text;

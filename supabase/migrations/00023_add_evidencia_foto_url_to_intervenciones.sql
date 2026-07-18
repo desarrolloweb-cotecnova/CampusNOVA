@@ -1,0 +1,1 @@
+ALTER TABLE intervenciones ADD COLUMN IF NOT EXISTS evidencia_foto_url TEXT;
