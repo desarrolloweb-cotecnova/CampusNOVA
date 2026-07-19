@@ -188,7 +188,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
     <div className="flex flex-col h-full bg-sidebar">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-4 bg-white">
-        <img src={LOGO_URL} alt="COTECNOVA" className="h-10 w-auto object-contain shrink-0" />
+        <img src={LOGO_URL} alt="COTECNOVA" className="h-14 w-auto object-contain shrink-0" />
         <div className="min-w-0">
         </div>
       </div>

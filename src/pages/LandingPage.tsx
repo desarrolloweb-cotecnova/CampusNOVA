@@ -111,9 +111,9 @@ export default function LandingPage() {
       {/* Navbar */}
       <header className="sticky top-0 z-50 bg-background/95 backdrop-blur border-b border-border">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
+          <div className="flex items-center justify-between h-20">
             <div className="flex items-center gap-3">
-              <img src={LOGO_URL} alt="COTECNOVA" className="h-10 w-auto object-contain" />
+              <img src={LOGO_URL} alt="COTECNOVA" className="h-14 w-auto object-contain" />
               <div className="hidden sm:block">
 
               </div>
