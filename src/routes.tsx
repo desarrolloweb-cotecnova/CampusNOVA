@@ -82,7 +82,6 @@ export const routes: RouteConfig[] = [
   { name: 'Administración', path: '/panel/admin', element: <AdminPage /> },
   { name: 'Usuarios', path: '/panel/admin/usuarios', element: <AdminPage /> },
   { name: 'Catálogos', path: '/panel/admin/catalogos', element: <AdminPage /> },
-  { name: 'Auditoría', path: '/panel/admin/auditoria', element: <AdminPage /> },
 
   // Perfil de usuario
   { name: 'Mi Perfil', path: '/panel/perfil', element: <PerfilPage /> },

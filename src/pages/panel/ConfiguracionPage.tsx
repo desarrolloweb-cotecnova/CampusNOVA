@@ -8,14 +8,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Database, Users, HardDrive, RefreshCw, Server,
   TableProperties, AlertCircle, CheckCircle2, AlertTriangle, XCircle,
-  Clock, FolderOpen, Zap, Shield,
+  Clock, FolderOpen,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import UsuariosPage from './UsuariosPage';
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 interface TableSize {
@@ -237,7 +235,13 @@ export default function ConfiguracionPage() {
       setLastFetch(new Date().toISOString());
       toast.success('Métricas actualizadas correctamente');
     } catch (err: unknown) {
-      const mensaje = (err as Error)?.message || 'Error desconocido';
+      const raw = (err as Error)?.message || 'Error desconocido';
+      // Mensaje claro cuando la Edge Function aún no está desplegada.
+      const noDesplegada =
+        /failed to send a request|not found|404|failed to fetch/i.test(raw);
+      const mensaje = noDesplegada
+        ? 'La función de monitoreo (supabase-monitor) no está desplegada en este proyecto de Supabase. Despliégala para ver las métricas (ver docs/MIGRACION.md, sección Edge Functions).'
+        : raw;
       setError(mensaje);
       toast.error('Error al obtener métricas', { description: mensaje });
     } finally {
@@ -295,32 +299,12 @@ export default function ConfiguracionPage() {
           <div>
             <h1 className="text-2xl font-bold md:text-3xl text-balance">Configuración</h1>
             <p className="text-muted-foreground text-sm md:text-base text-pretty">
-              Gestión de usuarios, roles y monitoreo del sistema
+              Monitoreo del sistema
             </p>
           </div>
         </div>
 
-        <Tabs defaultValue="usuarios">
-          <TabsList>
-            <TabsTrigger value="usuarios" className="gap-2">
-              <Shield className="h-4 w-4" />
-              Usuarios
-            </TabsTrigger>
-            <TabsTrigger value="monitoreo" className="gap-2">
-              <Server className="h-4 w-4" />
-              Monitoreo Supabase
-            </TabsTrigger>
-            <TabsTrigger value="sistema" className="gap-2">
-              <Zap className="h-4 w-4" />
-              Sistema
-            </TabsTrigger>
-          </TabsList>
-
-          {/* ── Tab: Usuarios ─────────────────────────────────────────── */}
-          <TabsContent value="usuarios" className="mt-5">
-            <UsuariosPage />
-          </TabsContent>
-          <TabsContent value="monitoreo" className="space-y-5 mt-5">
+        <div className="space-y-5">
             {/* Sub-encabezado con botón refrescar */}
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -580,23 +564,7 @@ export default function ConfiguracionPage() {
                 </p>
               </>
             )}
-          </TabsContent>
-
-          {/* ── Tab: Sistema ──────────────────────────────────────────── */}
-          <TabsContent value="sistema" className="mt-5">
-            <Card className="border-dashed">
-              <CardContent className="flex flex-col items-center justify-center py-16 gap-4">
-                <Zap className="h-12 w-12 text-muted-foreground/40" />
-                <div className="text-center">
-                  <p className="font-medium text-muted-foreground">Configuración del sistema</p>
-                  <p className="text-sm text-muted-foreground/70 mt-1 text-pretty">
-                    Parámetros generales, notificaciones y ajustes institucionales próximamente.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+        </div>
       </div>
       </RoleGuard>
     </AppLayout>

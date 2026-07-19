@@ -3,12 +3,11 @@ import { Plus, Edit, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
@@ -25,21 +24,9 @@ interface PerfilAdmin {
   created_at: string;
 }
 
-interface AuditLog {
-  id: string;
-  usuario_nombre: string | null;
-  accion: string;
-  modulo: string | null;
-  entidad_id: string | null;
-  detalles: Record<string, unknown> | null;
-  created_at: string;
-}
-
 export default function AdminPage() {
   const [usuarios, setUsuarios] = useState<PerfilAdmin[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [loadingLogs, setLoadingLogs] = useState(true);
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<PerfilAdmin | null>(null);
@@ -57,26 +44,9 @@ export default function AdminPage() {
     setLoadingUsers(false);
   }, []);
 
-  const loadLogs = useCallback(async () => {
-    setLoadingLogs(true);
-    const { data, error } = await supabase
-      .from('logs_auditoria')
-      .select('id, usuario_nombre, accion, modulo, entidad_id, detalles, created_at')
-      .order('created_at', { ascending: false })
-      .limit(100);
-    if (error) {
-      toast.error('Error al cargar auditoría', { description: error.message });
-      setAuditLogs([]);
-    } else {
-      setAuditLogs(Array.isArray(data) ? data : []);
-    }
-    setLoadingLogs(false);
-  }, []);
-
   useEffect(() => {
     loadUsuarios();
-    loadLogs();
-  }, [loadUsuarios, loadLogs]);
+  }, [loadUsuarios]);
 
   const openCreateUser = () => {
     setEditingUser(null);
@@ -154,26 +124,10 @@ export default function AdminPage() {
     responsable: 'Responsable',
   };
 
-  const accionBadge = (accion: string) => {
-    const map: Record<string, string> = {
-      INSERT: 'bg-green-100 text-green-800',
-      DELETE: 'bg-red-100 text-red-800',
-      UPDATE: 'bg-blue-100 text-blue-800',
-    };
-    return map[accion?.toUpperCase()] ?? 'bg-muted text-muted-foreground';
-  };
-
   return (
     <AppLayout>
       <div className="space-y-5">
-        <Tabs defaultValue="usuarios">
-          <TabsList>
-            <TabsTrigger value="usuarios">Usuarios</TabsTrigger>
-            <TabsTrigger value="auditoria">Auditoría</TabsTrigger>
-          </TabsList>
-
-          {/* Usuarios */}
-          <TabsContent value="usuarios" className="space-y-4">
+        <div className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-base font-semibold">Gestión de Usuarios ({usuarios.length})</h2>
               <Button size="sm" onClick={openCreateUser}><Plus className="h-4 w-4 mr-1.5" /> Crear Usuario</Button>
@@ -226,66 +180,7 @@ export default function AdminPage() {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
-
-          {/* Auditoría */}
-          <TabsContent value="auditoria">
-            <Card className="shadow-card min-w-0">
-              <CardHeader>
-                <CardTitle className="text-base">Últimas 100 acciones del sistema</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="w-full overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="whitespace-nowrap">Fecha</TableHead>
-                        <TableHead className="whitespace-nowrap">Usuario</TableHead>
-                        <TableHead className="whitespace-nowrap">Módulo</TableHead>
-                        <TableHead className="whitespace-nowrap">Acción</TableHead>
-                        <TableHead className="whitespace-nowrap">Entidad</TableHead>
-                        <TableHead className="whitespace-nowrap">Detalles</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {loadingLogs ? (
-                        Array(8).fill(0).map((_, i) => (
-                          <TableRow key={i}>{Array(6).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}</TableRow>
-                        ))
-                      ) : auditLogs.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
-                            Sin registros de auditoría
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        auditLogs.map(l => (
-                          <TableRow key={l.id}>
-                            <TableCell className="whitespace-nowrap text-xs">{formatDateTime(l.created_at)}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm">{l.usuario_nombre || '—'}</TableCell>
-                            <TableCell className="whitespace-nowrap font-mono text-xs">{l.modulo || '—'}</TableCell>
-                            <TableCell className="whitespace-nowrap">
-                              <Badge className={`${accionBadge(l.accion)} border-0 text-xs`}>{l.accion}</Badge>
-                            </TableCell>
-                            <TableCell className="whitespace-nowrap text-xs font-mono text-muted-foreground">{l.entidad_id || '—'}</TableCell>
-                            <TableCell className="text-xs text-muted-foreground max-w-xs truncate">
-                              {l.detalles ? JSON.stringify(l.detalles) : '—'}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-                {auditLogs.length > 0 && (
-                  <div className="px-4 py-2 border-t border-border text-xs text-muted-foreground">
-                    {auditLogs.length} registro{auditLogs.length !== 1 ? 's' : ''} mostrados
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+          </div>
 
         {/* Diálogo de usuario */}
         <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>

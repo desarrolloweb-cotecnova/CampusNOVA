@@ -98,7 +98,6 @@ const navItems: NavItem[] = [
     roles: ['admin', 'rectoria'],
     children: [
       { label: 'Usuarios', path: '/panel/admin/usuarios' },
-      { label: 'Auditoría', path: '/panel/admin/auditoria' },
       { label: 'Monitoreo Supabase', path: '/panel/admin/configuracion' },
     ],
   },
@@ -270,7 +269,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     if (path.startsWith('/panel/admin/usuarios')) return 'Gestión de Usuarios';
     if (path.startsWith('/panel/admin/catalogos')) return 'Catálogos';
     if (path.startsWith('/panel/admin/configuracion')) return 'Configuración';
-    if (path.startsWith('/panel/admin/auditoria')) return 'Logs de Auditoría';
     if (path.startsWith('/panel/perfil')) return 'Mi Perfil';
     return 'CampusNOVA';
   };
