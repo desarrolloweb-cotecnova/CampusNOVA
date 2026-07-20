@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import type {
@@ -112,6 +113,11 @@ export default function EspacioDetallePage() {
   // Dialog ver activo (ficha completa)
   const [viewActivoDialog, setViewActivoDialog] = useState(false);
   const [viewingActivo, setViewingActivo] = useState<ActivoFijo | null>(null);
+
+  // Traslado de activos entre responsables (selección múltiple)
+  const [selectedActivos, setSelectedActivos] = useState<string[]>([]);
+  const [trasladarResponsable, setTrasladarResponsable] = useState('');
+  const [savingTraslado, setSavingTraslado] = useState(false);
 
   // Dialog nueva intervención
   const [intervDialog, setIntervDialog] = useState(false);
@@ -397,13 +403,53 @@ export default function EspacioDetallePage() {
     loadData();
   };
 
-  const handleDesasignarResponsable = async (asigId: string) => {
+  const handleDesasignarResponsable = async (asigId: string, nombreResp: string | null) => {
+    // Cuántos activos del espacio siguen a nombre de este responsable
+    const conActivos = activos.filter(
+      a => (a.responsable?.trim() || '') === (nombreResp?.trim() || '')
+    ).length;
+    if (conActivos > 0) {
+      const ok = window.confirm(
+        `Este responsable todavía tiene ${conActivos} activo(s) fijo(s) a su nombre en este espacio. ` +
+        `Se recomienda trasladar esos activos a otro responsable antes de removerlo.\n\n¿Removerlo de todos modos?`
+      );
+      if (!ok) return;
+    }
     const { error } = await supabase
       .from('asignaciones_espacios')
       .update({ activo: false })
       .eq('id', asigId);
     if (error) { toast.error('Error al desasignar'); return; }
     toast.success('Responsable desasignado');
+    loadData();
+  };
+
+  // ─── Traslado de activos entre responsables del espacio ─────────────────────
+  const toggleActivoSel = (id: string) => {
+    setSelectedActivos(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const toggleGrupoSel = (ids: string[], todosSel: boolean) => {
+    setSelectedActivos(prev => todosSel
+      ? prev.filter(x => !ids.includes(x))
+      : Array.from(new Set([...prev, ...ids]))
+    );
+  };
+
+  const handleTrasladarActivos = async () => {
+    if (selectedActivos.length === 0 || !trasladarResponsable) {
+      toast.error('Selecciona activos y el responsable destino');
+      return;
+    }
+    setSavingTraslado(true);
+    const { error } = await supabase
+      .from('activos_fijos')
+      .update({ responsable: trasladarResponsable })
+      .in('id', selectedActivos);
+    setSavingTraslado(false);
+    if (error) { toast.error('Error al trasladar: ' + error.message); return; }
+    toast.success(`${selectedActivos.length} activo(s) trasladado(s) a ${trasladarResponsable}`);
+    setSelectedActivos([]);
+    setTrasladarResponsable('');
     loadData();
   };
 
@@ -889,7 +935,11 @@ export default function EspacioDetallePage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {responsables.map(r => (
+                    {responsables.map(r => {
+                      const numActivos = activos.filter(
+                        a => (a.responsable?.trim() || '') === (r.perfil.nombre?.trim() || '')
+                      ).length;
+                      return (
                       <div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
                         <Avatar className="h-9 w-9 shrink-0">
                           <AvatarImage src={r.perfil.avatar_url || ''} />
@@ -904,17 +954,25 @@ export default function EspacioDetallePage() {
                             Desde: {formatDate(r.fecha_asignacion)}
                           </p>
                         </div>
+                        <Badge
+                          variant={numActivos > 0 ? 'secondary' : 'outline'}
+                          className="text-xs shrink-0"
+                          title="Activos fijos a nombre de este responsable en este espacio"
+                        >
+                          {numActivos} activo{numActivos !== 1 ? 's' : ''}
+                        </Badge>
                         <Button
                           size="icon"
                           variant="ghost"
                           className="h-8 w-8 shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          title="Desasignar"
-                          onClick={() => handleDesasignarResponsable(r.id)}
+                          title={numActivos > 0 ? 'Traslada primero sus activos (pestaña Activos)' : 'Quitar responsable del espacio'}
+                          onClick={() => handleDesasignarResponsable(r.id, r.perfil.nombre)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -925,11 +983,51 @@ export default function EspacioDetallePage() {
           <TabsContent value="activos">
             <Card className="shadow-card min-w-0">
               <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
-                <CardTitle className="text-base">Activos fijos en este espacio</CardTitle>
+                <div>
+                  <CardTitle className="text-base">Activos fijos en este espacio</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Selecciona activos para trasladarlos a otro responsable del espacio.
+                  </p>
+                </div>
                 <Button size="sm" className="gap-1.5 shrink-0" onClick={openNuevoActivo}>
                   <Plus className="h-3.5 w-3.5" /> Nuevo activo
                 </Button>
               </CardHeader>
+
+              {/* Barra de traslado (visible al seleccionar activos) */}
+              {selectedActivos.length > 0 && (
+                <div className="mx-4 mb-3 rounded-lg border border-primary/30 bg-primary/5 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <span className="text-sm font-medium shrink-0">
+                    {selectedActivos.length} activo{selectedActivos.length !== 1 ? 's' : ''} seleccionado{selectedActivos.length !== 1 ? 's' : ''}
+                  </span>
+                  {responsables.length === 0 ? (
+                    <span className="text-xs text-amber-600">
+                      Primero asigna responsables a este espacio (pestaña Responsables) para poder trasladar.
+                    </span>
+                  ) : (
+                    <div className="flex flex-1 flex-col sm:flex-row gap-2 sm:items-center">
+                      <span className="text-sm text-muted-foreground shrink-0">Trasladar a:</span>
+                      <Select value={trasladarResponsable} onValueChange={setTrasladarResponsable}>
+                        <SelectTrigger className="h-9 flex-1 min-w-0"><SelectValue placeholder="Seleccionar responsable..." /></SelectTrigger>
+                        <SelectContent>
+                          {responsables.map(r => (
+                            <SelectItem key={r.id} value={r.perfil.nombre || r.perfil.email || r.id}>
+                              {r.perfil.nombre || r.perfil.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex gap-2 shrink-0">
+                        <Button size="sm" onClick={handleTrasladarActivos} disabled={savingTraslado || !trasladarResponsable}>
+                          {savingTraslado ? 'Trasladando...' : 'Trasladar'}
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setSelectedActivos([])}>Limpiar</Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <CardContent className="p-4">
                 {activos.length === 0 ? (
                   <p className="text-center text-muted-foreground py-10">Sin activos en este espacio</p>
@@ -941,7 +1039,10 @@ export default function EspacioDetallePage() {
                       if (!grupos[key]) grupos[key] = [];
                       grupos[key].push(a);
                     });
-                    return Object.entries(grupos).map(([responsable, items]) => (
+                    return Object.entries(grupos).map(([responsable, items]) => {
+                      const idsGrupo = items.map(i => i.id);
+                      const todosSel = idsGrupo.every(id => selectedActivos.includes(id));
+                      return (
                       <div key={responsable} className="mb-6 last:mb-0">
                         <div className="flex items-center gap-2 mb-3">
                           <Users className="h-4 w-4 text-primary shrink-0" />
@@ -952,6 +1053,13 @@ export default function EspacioDetallePage() {
                           <Table>
                             <TableHeader>
                               <TableRow>
+                                <TableHead className="w-10">
+                                  <Checkbox
+                                    checked={todosSel}
+                                    onCheckedChange={() => toggleGrupoSel(idsGrupo, todosSel)}
+                                    aria-label="Seleccionar todos"
+                                  />
+                                </TableHead>
                                 <TableHead className="whitespace-nowrap">Código</TableHead>
                                 <TableHead className="whitespace-nowrap">Nombre</TableHead>
                                 <TableHead className="whitespace-nowrap">Categoría</TableHead>
@@ -961,7 +1069,14 @@ export default function EspacioDetallePage() {
                             </TableHeader>
                             <TableBody>
                               {items.map(a => (
-                                <TableRow key={a.id}>
+                                <TableRow key={a.id} data-state={selectedActivos.includes(a.id) ? 'selected' : undefined}>
+                                  <TableCell>
+                                    <Checkbox
+                                      checked={selectedActivos.includes(a.id)}
+                                      onCheckedChange={() => toggleActivoSel(a.id)}
+                                      aria-label={`Seleccionar ${a.codigo}`}
+                                    />
+                                  </TableCell>
                                   <TableCell className="whitespace-nowrap font-mono text-xs">{a.codigo}</TableCell>
                                   <TableCell className="whitespace-nowrap font-medium">{a.nombre}</TableCell>
                                   <TableCell className="whitespace-nowrap text-sm">{a.categoria}</TableCell>
@@ -980,7 +1095,8 @@ export default function EspacioDetallePage() {
                           </Table>
                         </div>
                       </div>
-                    ));
+                      );
+                    });
                   })()
                 )}
               </CardContent>
