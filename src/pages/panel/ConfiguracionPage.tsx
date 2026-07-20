@@ -292,7 +292,7 @@ export default function ConfiguracionPage() {
 
   return (
     <AppLayout>
-      <RoleGuard allowedRoles={['admin', 'rectoria']} redirect>
+      <RoleGuard allowedRoles={['admin', 'rector']} redirect>
       <div className="space-y-6">
         {/* Encabezado */}
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

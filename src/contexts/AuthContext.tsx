@@ -21,7 +21,7 @@ export async function getProfile(userId: string): Promise<Profile | null> {
 }
 
 /** Roles que tienen acceso completo al sistema (igual que admin) */
-export const FULL_ACCESS_ROLES: UserRole[] = ['admin', 'rectoria'];
+export const FULL_ACCESS_ROLES: UserRole[] = ['admin', 'rector'];
 
 /** Verifica si el perfil tiene uno de los roles indicados */
 export function hasRole(profile: Profile | null, roles: UserRole[]): boolean {
@@ -31,13 +31,13 @@ export function hasRole(profile: Profile | null, roles: UserRole[]): boolean {
 
 /** Módulos accesibles por rol */
 export const MODULE_ACCESS: Record<string, UserRole[]> = {
-  dashboard:      ['admin', 'rectoria', 'infraestructura', 'responsable'],
-  activos:        ['admin', 'rectoria', 'infraestructura'],
-  espacios:       ['admin', 'rectoria', 'infraestructura', 'responsable'],
-  responsables:   ['admin', 'rectoria', 'infraestructura'],
-  novedades:      ['admin', 'rectoria', 'infraestructura', 'responsable'],
-  reservas:       ['admin', 'rectoria', 'infraestructura', 'responsable'],
-  configuracion:  ['admin', 'rectoria'],
+  dashboard:      ['admin', 'rector', 'infraestructura', 'responsable'],
+  activos:        ['admin', 'rector', 'infraestructura'],
+  espacios:       ['admin', 'rector', 'infraestructura', 'responsable'],
+  responsables:   ['admin', 'rector', 'infraestructura'],
+  novedades:      ['admin', 'rector', 'infraestructura', 'responsable'],
+  reservas:       ['admin', 'rector', 'infraestructura', 'responsable'],
+  configuracion:  ['admin', 'rector'],
 };
 interface AuthContextType {
   user: User | null;
@@ -120,12 +120,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 sessionUser.user_metadata?.avatar_url ||
                 sessionUser.user_metadata?.picture || '';
               // Columnas reales de la tabla `profiles`: email, nombre, avatar_url, role, activo
+              // Los usuarios nuevos quedan INACTIVOS hasta que un admin/rector los active.
               supabase.from('profiles').upsert({
                 id: sessionUser.id,
                 email: sessionUser.email,
                 nombre: displayName,
                 avatar_url: avatarUrl,
                 role: 'responsable',
+                activo: false,
               }, { onConflict: 'id' }).then(() => {
                 getProfile(sessionUser.id).then(p => {
                   setProfile(p);
@@ -197,8 +199,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(null);
   };
 
-  const isAdmin = profile?.role === 'admin' || profile?.role === 'rectoria';
-  const canConfigure = profile?.role === 'admin' || profile?.role === 'rectoria';
+  const isAdmin = profile?.role === 'admin' || profile?.role === 'rector';
+  const canConfigure = profile?.role === 'admin' || profile?.role === 'rector';
 
   return (
     <AuthContext.Provider value={{

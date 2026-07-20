@@ -1,6 +1,6 @@
 // Tipos base de CampusNOVA — COTECNOVA
 
-export type UserRole = 'admin' | 'infraestructura' | 'rectoria' | 'responsable';
+export type UserRole = 'admin' | 'infraestructura' | 'rector' | 'responsable';
 export type EstadoActivo = 'En funcionamiento' | 'Daño parcial' | 'Dado de baja' | 'En reparación';
 export type EstadoEspacio = 'Bueno' | 'Regular' | 'Requiere intervención';
 export type TipoEspacio = string;

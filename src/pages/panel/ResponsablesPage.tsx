@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Users, Building2, Plus, Trash2, ArrowRightLeft,
-  ChevronDown, ChevronUp, Search, CalendarDays, UserCheck, FileText,
+  ChevronDown, ChevronUp, Search, CalendarDays, UserCheck, FileText, UserCog,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -108,6 +109,16 @@ export default function ResponsablesPage() {
   const [desasignarTarget, setDesasignarTarget] = useState<AsignacionEspacio | null>(null);
   const [deletingAsig, setDeletingAsig] = useState(false);
 
+  // Dialog reasignar (traspasar espacio + activos a otro responsable)
+  const [reasignarDialog, setReasignarDialog] = useState(false);
+  const [reasignarTarget, setReasignarTarget] = useState<{ asig: AsignacionEspacio; perfil: Profile } | null>(null);
+  const [nuevoResponsableId, setNuevoResponsableId] = useState('');
+  const [motivoReasignacion, setMotivoReasignacion] = useState('');
+  const [actualizarActivos, setActualizarActivos] = useState(true);
+  const [obsReasignar, setObsReasignar] = useState('');
+  const [activosEnEspacio, setActivosEnEspacio] = useState<number | null>(null);
+  const [savingReasignar, setSavingReasignar] = useState(false);
+
   // ─── Carga de datos ─────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -196,6 +207,91 @@ export default function ResponsablesPage() {
     toast.success('Asignación removida');
     setDesasignarTarget(null);
     loadData();
+  };
+
+  // ─── Reasignar (traspasar espacio + activos a otro responsable) ─────────────
+  const openReasignar = async (perfil: Profile, asig: AsignacionEspacio) => {
+    setReasignarTarget({ asig, perfil });
+    setNuevoResponsableId('');
+    setMotivoReasignacion('');
+    setActualizarActivos(true);
+    setObsReasignar('');
+    setActivosEnEspacio(null);
+    setReasignarDialog(true);
+    const { count } = await supabase
+      .from('activos_fijos')
+      .select('id', { count: 'exact', head: true })
+      .eq('espacio_id', asig.espacio_id)
+      .eq('dado_de_baja', false);
+    setActivosEnEspacio(count ?? 0);
+  };
+
+  const handleReasignar = async () => {
+    if (!reasignarTarget || !nuevoResponsableId || !motivoReasignacion) {
+      toast.error('Selecciona el nuevo responsable y el motivo');
+      return;
+    }
+    const { asig, perfil: perfilAnterior } = reasignarTarget;
+    const nuevoPerfil = perfiles.find(p => p.id === nuevoResponsableId);
+    if (!nuevoPerfil) return;
+
+    setSavingReasignar(true);
+    try {
+      // 1) Cerrar la asignación anterior (mantiene historial)
+      const { error: errDes } = await supabase
+        .from('asignaciones_espacios')
+        .update({ activo: false })
+        .eq('id', asig.id);
+      if (errDes) throw errDes;
+
+      // 2) Crear/reactivar la asignación para el nuevo responsable
+      const { error: errAsig } = await supabase
+        .from('asignaciones_espacios')
+        .upsert({
+          espacio_id: asig.espacio_id,
+          responsable_id: nuevoResponsableId,
+          activo: true,
+          fecha_asignacion: HOY,
+          observaciones: obsReasignar || null,
+        }, { onConflict: 'espacio_id,responsable_id' });
+      if (errAsig) throw errAsig;
+
+      // 3) Actualizar el responsable de los activos fijos del espacio (opcional)
+      if (actualizarActivos) {
+        const { error: errAct } = await supabase
+          .from('activos_fijos')
+          .update({ responsable: nuevoPerfil.nombre || nuevoPerfil.email })
+          .eq('espacio_id', asig.espacio_id)
+          .eq('dado_de_baja', false);
+        if (errAct) throw errAct;
+      }
+
+      // 4) Registrar el movimiento (recibo del nuevo responsable, entrega del anterior)
+      const { error: errMov } = await supabase.from('movimientos_espacios').insert({
+        espacio_id: asig.espacio_id,
+        tipo_movimiento: 'recibo',
+        persona_recibe_id: nuevoResponsableId,
+        persona_recibe_nombre: nuevoPerfil.nombre || nuevoPerfil.email,
+        persona_entrega_id: perfilAnterior.id,
+        persona_entrega_nombre: perfilAnterior.nombre || perfilAnterior.email,
+        fecha_movimiento: HOY,
+        motivo_codigo: motivoReasignacion,
+        observaciones: obsReasignar || null,
+        registrado_por: user?.id || null,
+      });
+      if (errMov) throw errMov;
+
+      toast.success(
+        `Espacio reasignado de ${perfilAnterior.nombre} a ${nuevoPerfil.nombre}` +
+        (actualizarActivos ? ' (incluye activos fijos)' : '')
+      );
+      setReasignarDialog(false);
+      loadData();
+    } catch (err: unknown) {
+      toast.error('Error al reasignar', { description: (err as Error)?.message });
+    } finally {
+      setSavingReasignar(false);
+    }
   };
 
   // ─── Movimiento ──────────────────────────────────────────────────────────────
@@ -430,6 +526,15 @@ export default function ResponsablesPage() {
                                     <Button
                                       size="icon"
                                       variant="ghost"
+                                      className="h-7 w-7 text-primary hover:text-primary hover:bg-primary/10"
+                                      title="Reasignar a otro responsable"
+                                      onClick={() => openReasignar(perfil, asig)}
+                                    >
+                                      <UserCog className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
                                       className="h-7 w-7"
                                       title="Registrar movimiento"
                                       onClick={() => openMovimiento(perfil, esp)}
@@ -658,6 +763,102 @@ export default function ResponsablesPage() {
                 ? 'Guardando...'
                 : `Asignar ${espaciosSeleccionados.length > 0 ? `(${espaciosSeleccionados.length})` : ''}`
               }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Dialog: Reasignar espacio (+ activos) a otro responsable ───────────── */}
+      <Dialog open={reasignarDialog} onOpenChange={setReasignarDialog}>
+        <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCog className="h-5 w-5" />
+              Reasignar espacio a otro responsable
+            </DialogTitle>
+          </DialogHeader>
+
+          {reasignarTarget && (
+            <div className="flex flex-col gap-4 py-2">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                <p>
+                  <span className="text-muted-foreground">Espacio: </span>
+                  <span className="font-medium">
+                    {espacios.find(e => e.id === reasignarTarget.asig.espacio_id)?.codigo}
+                    {' — '}
+                    {espacios.find(e => e.id === reasignarTarget.asig.espacio_id)?.nombre}
+                  </span>
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Responsable actual: </span>
+                  <span className="font-medium">{reasignarTarget.perfil.nombre || reasignarTarget.perfil.email}</span>
+                </p>
+                {activosEnEspacio !== null && activosEnEspacio > 0 && (
+                  <p className="text-amber-600 mt-1">
+                    Este espacio tiene {activosEnEspacio} activo{activosEnEspacio !== 1 ? 's' : ''} fijo{activosEnEspacio !== 1 ? 's' : ''} registrado{activosEnEspacio !== 1 ? 's' : ''}.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Nuevo responsable <span className="text-destructive">*</span></Label>
+                <Select value={nuevoResponsableId} onValueChange={setNuevoResponsableId}>
+                  <SelectTrigger><SelectValue placeholder="Seleccionar responsable..." /></SelectTrigger>
+                  <SelectContent>
+                    {perfiles
+                      .filter(p => p.id !== reasignarTarget.perfil.id)
+                      .map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.nombre || p.email}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Motivo <span className="text-destructive">*</span></Label>
+                <Select value={motivoReasignacion} onValueChange={setMotivoReasignacion}>
+                  <SelectTrigger><SelectValue placeholder="Seleccionar motivo..." /></SelectTrigger>
+                  <SelectContent>
+                    {motivos.filter(m => m.tipo === 'recibo').map(m => (
+                      <SelectItem key={m.codigo} value={m.codigo}>{m.codigo} — {m.nombre}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {activosEnEspacio !== null && activosEnEspacio > 0 && (
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="actualizar-activos"
+                    checked={actualizarActivos}
+                    onCheckedChange={v => setActualizarActivos(!!v)}
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="actualizar-activos" className="text-sm font-normal leading-relaxed cursor-pointer">
+                    Actualizar también el responsable en los {activosEnEspacio} activo{activosEnEspacio !== 1 ? 's' : ''} fijo{activosEnEspacio !== 1 ? 's' : ''} de este espacio
+                  </Label>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label>Observaciones (opcional)</Label>
+                <Textarea
+                  placeholder="Notas sobre esta reasignación..."
+                  value={obsReasignar}
+                  onChange={e => setObsReasignar(e.target.value)}
+                  rows={2}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setReasignarDialog(false)}>Cancelar</Button>
+            <Button
+              onClick={handleReasignar}
+              disabled={savingReasignar || !nuevoResponsableId || !motivoReasignacion}
+            >
+              {savingReasignar ? 'Reasignando...' : 'Confirmar reasignación'}
             </Button>
           </DialogFooter>
         </DialogContent>

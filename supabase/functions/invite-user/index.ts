@@ -18,7 +18,7 @@ const SITE_URL = Deno.env.get('SITE_URL') ?? 'https://campusnova.vercel.app';
 function buildInviteEmail(nombre: string | null, email: string, role: string, actionLink: string): string {
   const roleLabels: Record<string, string> = {
     admin: 'Administrador',
-    rectoria: 'Rectoría',
+    rector: 'Rector',
     infraestructura: 'Infraestructura',
     responsable: 'Responsable',
   };
@@ -124,7 +124,7 @@ Deno.serve(async (req: Request) => {
     const cargo: string | null = body?.cargo ?? null;
     const role: string = body?.role ?? 'responsable';
 
-    const validRoles = ['admin', 'rectoria', 'infraestructura', 'responsable'];
+    const validRoles = ['admin', 'rector', 'infraestructura', 'responsable'];
     const safeRole = validRoles.includes(role) ? role : 'responsable';
 
     if (!email || !email.includes('@')) {
@@ -149,7 +149,10 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Crear perfil base con rol, nombre y cargo
+    // Crear/actualizar perfil con rol, nombre y cargo. El trigger de auth.users
+    // pudo haber creado ya la fila (con valores por defecto) antes de este paso,
+    // así que usamos DO UPDATE (no ignoreDuplicates) para que el rol elegido y
+    // el estado "inactivo hasta primer ingreso" queden aplicados de verdad.
     if (data?.user?.id) {
       await supabaseAdmin.from('profiles').upsert({
         id: data.user.id,
@@ -159,7 +162,8 @@ Deno.serve(async (req: Request) => {
         role: safeRole,
         avatar_url: null,
         must_change_password: true,
-      }, { onConflict: 'id', ignoreDuplicates: true });
+        activo: false,
+      }, { onConflict: 'id', ignoreDuplicates: false });
     }
 
     // Construir y enviar correo personalizado en español

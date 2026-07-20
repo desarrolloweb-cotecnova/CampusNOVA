@@ -21,7 +21,7 @@ import { LOGO_URL } from '@/lib/assets';
 /** Etiquetas legibles de los roles. */
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
-  rectoria: 'Rectoría',
+  rector: 'Rector',
   infraestructura: 'Infraestructura',
   responsable: 'Responsable',
 };
@@ -45,7 +45,7 @@ const navItems: NavItem[] = [
     label: 'Activos Fijos',
     path: '/panel/activos',
     icon: Package,
-    roles: ['admin', 'rectoria', 'infraestructura'],
+    roles: ['admin', 'rector', 'infraestructura'],
     children: [
       { label: 'Inventario', path: '/panel/activos' },
       { label: 'Movimientos', path: '/panel/activos/movimientos' },
@@ -59,18 +59,18 @@ const navItems: NavItem[] = [
     path: '/panel/espacios',
     icon: Building2,
     children: [
-      { label: 'Listado', path: '/panel/espacios', roles: ['admin', 'rectoria', 'infraestructura'] },
+      { label: 'Listado', path: '/panel/espacios', roles: ['admin', 'rector', 'infraestructura'] },
       { label: 'Mis Espacios', path: '/panel/espacios/mis-espacios' },
-      { label: 'Intervenciones', path: '/panel/espacios/intervenciones', roles: ['admin', 'rectoria', 'infraestructura'] },
-      { label: 'Documentación', path: '/panel/espacios/documentos', roles: ['admin', 'rectoria', 'infraestructura'] },
-      { label: 'Gestión', path: '/panel/espacios/gestion', roles: ['admin', 'rectoria', 'infraestructura'] },
+      { label: 'Intervenciones', path: '/panel/espacios/intervenciones', roles: ['admin', 'rector', 'infraestructura'] },
+      { label: 'Documentación', path: '/panel/espacios/documentos', roles: ['admin', 'rector', 'infraestructura'] },
+      { label: 'Gestión', path: '/panel/espacios/gestion', roles: ['admin', 'rector', 'infraestructura'] },
     ],
   },
   {
     label: 'Responsables',
     path: '/panel/responsables',
     icon: UserCheck,
-    roles: ['admin', 'rectoria', 'infraestructura'],
+    roles: ['admin', 'rector', 'infraestructura'],
   },
   {
     label: 'Novedades',
@@ -95,7 +95,7 @@ const navItems: NavItem[] = [
     label: 'Configuración',
     path: '/panel/admin',
     icon: Settings,
-    roles: ['admin', 'rectoria'],
+    roles: ['admin', 'rector'],
     children: [
       { label: 'Usuarios', path: '/panel/admin/usuarios' },
       { label: 'Monitoreo Supabase', path: '/panel/admin/configuracion' },
@@ -180,7 +180,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
   const roleLabel: Record<string, string> = {
     admin: 'Administrador',
     infraestructura: 'Infraestructura',
-    rectoria: 'Rectoría',
+    rector: 'Rector',
     responsable: 'Responsable',
   };
 

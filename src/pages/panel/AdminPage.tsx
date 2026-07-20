@@ -120,7 +120,7 @@ export default function AdminPage() {
   const roleLabel: Record<string, string> = {
     admin: 'Administrador',
     infraestructura: 'Infraestructura',
-    rectoria: 'Rectoría',
+    rector: 'Rector',
     responsable: 'Responsable',
   };
 
@@ -204,7 +204,7 @@ export default function AdminPage() {
                       <SelectContent>
                         <SelectItem value="responsable">Responsable</SelectItem>
                         <SelectItem value="infraestructura">Infraestructura</SelectItem>
-                        <SelectItem value="rectoria">Rectoría</SelectItem>
+                        <SelectItem value="rector">Rector</SelectItem>
                         <SelectItem value="admin">Administrador</SelectItem>
                       </SelectContent>
                     </Select>
