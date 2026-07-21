@@ -1,16 +1,21 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Edit, Eye, EyeOff } from 'lucide-react';
+import { Plus, Edit, Eye, EyeOff, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { formatDateTime } from '@/lib/utils';
 import { toast } from 'sonner';
 
@@ -24,8 +29,22 @@ interface PerfilAdmin {
   created_at: string;
 }
 
+/** Fila unificada para la tabla: usuario registrado o registro precargado. */
+interface FilaUsuario {
+  key: string;              // identificador de fila (uuid o 'precarga:'+email)
+  id: string | null;       // uuid del perfil si está registrado; null si solo precargado
+  email: string;
+  nombre: string | null;
+  cargo: string | null;
+  role: string | null;     // null cuando aún no se ha registrado
+  activo: boolean | null;  // null cuando aún no se ha registrado
+  created_at: string;
+  precargado: boolean;     // true = está en usuarios_precarga y aún no se registra
+}
+
 export default function AdminPage() {
-  const [usuarios, setUsuarios] = useState<PerfilAdmin[]>([]);
+  const { profile } = useAuth();
+  const [filas, setFilas] = useState<FilaUsuario[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
@@ -37,16 +56,80 @@ export default function AdminPage() {
   const [showPwd, setShowPwd] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // Estado de eliminación
+  const [deleteTarget, setDeleteTarget] = useState<FilaUsuario | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const loadUsuarios = useCallback(async () => {
     setLoadingUsers(true);
-    const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-    setUsuarios(Array.isArray(data) ? data : []);
+    const [{ data: perfiles }, { data: precarga }] = await Promise.all([
+      supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+      supabase.from('usuarios_precarga').select('*').order('nombre', { ascending: true }),
+    ]);
+
+    const perfilesArr: PerfilAdmin[] = Array.isArray(perfiles) ? perfiles : [];
+    const registrados = new Set(perfilesArr.map(p => (p.email || '').toLowerCase()));
+
+    const filasRegistrados: FilaUsuario[] = perfilesArr.map(p => ({
+      key: p.id,
+      id: p.id,
+      email: p.email,
+      nombre: p.nombre,
+      cargo: p.cargo,
+      role: p.role,
+      activo: p.activo,
+      created_at: p.created_at,
+      precargado: false,
+    }));
+
+    // Solo mostramos precargados que AÚN no se han registrado (no están en profiles).
+    const filasPrecargados: FilaUsuario[] = (Array.isArray(precarga) ? precarga : [])
+      .filter((u: { email: string }) => !registrados.has((u.email || '').toLowerCase()))
+      .map((u: { email: string; nombre: string | null; cargo: string | null; created_at: string }) => ({
+        key: `precarga:${u.email}`,
+        id: null,
+        email: u.email,
+        nombre: u.nombre,
+        cargo: u.cargo,
+        role: null,
+        activo: null,
+        created_at: u.created_at,
+        precargado: true,
+      }));
+
+    setFilas([...filasRegistrados, ...filasPrecargados]);
     setLoadingUsers(false);
   }, []);
 
   useEffect(() => {
     loadUsuarios();
   }, [loadUsuarios]);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      if (deleteTarget.precargado) {
+        // Eliminar solo el registro de precarga (por correo).
+        const { error } = await supabase.from('usuarios_precarga').delete().eq('email', deleteTarget.email);
+        if (error) throw error;
+        toast.success(`Precarga de ${deleteTarget.email} eliminada`);
+      } else {
+        // Eliminar usuario registrado vía Edge Function (Admin API + cascada).
+        const { data, error } = await supabase.functions.invoke('delete-user', {
+          body: { userId: deleteTarget.id },
+        });
+        if (error || data?.error) throw new Error(error?.message || data?.error || 'Error desconocido');
+        toast.success(`Usuario ${deleteTarget.email} eliminado`);
+      }
+      setDeleteTarget(null);
+      loadUsuarios();
+    } catch (err: unknown) {
+      toast.error('Error al eliminar: ' + (err as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const openCreateUser = () => {
     setEditingUser(null);
@@ -57,9 +140,18 @@ export default function AdminPage() {
     setShowConfirm(false);
     setUserDialogOpen(true);
   };
-  const openEditUser = (u: PerfilAdmin) => {
-    setEditingUser(u);
-    setUserForm({ nombre: u.nombre, email: u.email, cargo: u.cargo ?? '', role: u.role, activo: u.activo });
+  const openEditUser = (u: FilaUsuario) => {
+    if (u.precargado || !u.id) return; // los precargados no se editan, solo se eliminan
+    setEditingUser({
+      id: u.id,
+      email: u.email,
+      nombre: u.nombre ?? '',
+      cargo: u.cargo,
+      role: u.role ?? 'responsable',
+      activo: u.activo ?? false,
+      created_at: u.created_at,
+    });
+    setUserForm({ nombre: u.nombre ?? '', email: u.email, cargo: u.cargo ?? '', role: u.role ?? 'responsable', activo: u.activo ?? false });
     setNewPassword('');
     setConfirmPassword('');
     setUserDialogOpen(true);
@@ -124,12 +216,21 @@ export default function AdminPage() {
     responsable: 'Responsable',
   };
 
+  const registradosCount = filas.filter(f => !f.precargado).length;
+  const precargadosCount = filas.filter(f => f.precargado).length;
+
   return (
     <AppLayout>
       <div className="space-y-5">
         <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <h2 className="text-base font-semibold">Gestión de Usuarios ({usuarios.length})</h2>
+            <div className="flex justify-between items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-base font-semibold">Gestión de Usuarios</h2>
+                <Badge className="bg-primary/10 text-primary border-0 text-xs">{registradosCount} registrados</Badge>
+                {precargadosCount > 0 && (
+                  <Badge className="bg-amber-100 text-amber-800 border-0 text-xs">{precargadosCount} precargados</Badge>
+                )}
+              </div>
               <Button size="sm" onClick={openCreateUser}><Plus className="h-4 w-4 mr-1.5" /> Crear Usuario</Button>
             </div>
             <Card className="shadow-card min-w-0">
@@ -151,25 +252,42 @@ export default function AdminPage() {
                         Array(4).fill(0).map((_, i) => (
                           <TableRow key={i}>{Array(6).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}</TableRow>
                         ))
-                      ) : usuarios.length === 0 ? (
+                      ) : filas.length === 0 ? (
                         <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Sin usuarios</TableCell></TableRow>
                       ) : (
-                        usuarios.map(u => (
-                          <TableRow key={u.id}>
-                            <TableCell className="whitespace-nowrap font-medium">{u.nombre}</TableCell>
+                        filas.map(u => (
+                          <TableRow key={u.key}>
+                            <TableCell className="whitespace-nowrap font-medium">{u.nombre || <span className="text-muted-foreground">—</span>}</TableCell>
                             <TableCell className="whitespace-nowrap text-sm">{u.email}</TableCell>
                             <TableCell className="whitespace-nowrap">
-                              <Badge className="bg-primary/10 text-primary border-0 text-xs">{roleLabel[u.role] || u.role}</Badge>
+                              {u.precargado
+                                ? <span className="text-xs text-muted-foreground">—</span>
+                                : <Badge className="bg-primary/10 text-primary border-0 text-xs">{roleLabel[u.role ?? ''] || u.role}</Badge>}
                             </TableCell>
                             <TableCell className="whitespace-nowrap">
-                              <Badge className={u.activo ? 'bg-green-100 text-green-800 border-0 text-xs' : 'bg-red-100 text-red-800 border-0 text-xs'}>
-                                {u.activo ? 'Activo' : 'Inactivo'}
-                              </Badge>
+                              {u.precargado ? (
+                                <Badge className="bg-amber-100 text-amber-800 border-0 text-xs">Precargado</Badge>
+                              ) : (
+                                <Badge className={u.activo ? 'bg-green-100 text-green-800 border-0 text-xs' : 'bg-red-100 text-red-800 border-0 text-xs'}>
+                                  {u.activo ? 'Activo' : 'Inactivo'}
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(u.created_at)}</TableCell>
                             <TableCell className="whitespace-nowrap text-right">
-                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditUser(u)}>
-                                <Edit className="h-3.5 w-3.5" />
+                              {!u.precargado && (
+                                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditUser(u)} title="Editar">
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                onClick={() => setDeleteTarget(u)}
+                                title="Eliminar"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             </TableCell>
                           </TableRow>
@@ -181,6 +299,36 @@ export default function AdminPage() {
               </CardContent>
             </Card>
           </div>
+
+        {/* Confirmación de eliminación */}
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {deleteTarget?.precargado ? 'Eliminar precarga' : 'Eliminar usuario'}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {deleteTarget?.precargado ? (
+                  <>Se quitará <strong>{deleteTarget?.email}</strong> del listado de precarga. Si esta persona se registra más adelante, su perfil ya no se rellenará automáticamente. Esta acción no se puede deshacer.</>
+                ) : deleteTarget?.id === profile?.id ? (
+                  <>No puedes eliminar tu propia cuenta.</>
+                ) : (
+                  <>Se eliminará al usuario <strong>{deleteTarget?.email}</strong> de forma permanente, junto con su perfil y sus asignaciones de espacios. Esta acción no se puede deshacer.</>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); handleDelete(); }}
+                disabled={deleting || (!deleteTarget?.precargado && deleteTarget?.id === profile?.id)}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting ? 'Eliminando...' : 'Eliminar'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Diálogo de usuario */}
         <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>
