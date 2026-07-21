@@ -47,15 +47,14 @@ export default function RegisterPage() {
       const uid = authData.user?.id;
       if (!uid) throw new Error('No se pudo obtener el ID del usuario creado.');
 
-      // Crear perfil con rol responsable y activo=false (el admin lo activa manualmente)
+      // El trigger handle_new_user ya crea el perfil (rol responsable, activo=false)
+      // y rellena nombre/cargo desde la precarga si el correo está en el listado.
+      // Solo aseguramos el correo por si el perfil no existiera aún; NO enviamos
+      // nombre/cargo/role para no sobrescribir los valores precargados.
       const { error: profileError } = await supabase.from('profiles').upsert({
         id: uid,
         email: email.trim().toLowerCase(),
-        nombre: null,
-        cargo: null,
-        role: 'responsable',
-        activo: false,
-      }, { onConflict: 'id', ignoreDuplicates: false });
+      }, { onConflict: 'id', ignoreDuplicates: true });
       if (profileError) throw profileError;
 
       toast.success('Solicitud de acceso enviada. Un administrador activará tu cuenta.');
