@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import type { ReservaAlquiler, EspacioFisico, EstadoReserva } from '@/types/types';
-import { getEstadoColor, formatDate, formatCurrency, cleanDateString } from '@/lib/utils';
+import { getEstadoColor, formatDate, formatCurrency, cleanDateString, reservasSeCruzan, formatFranjaHoraria, ESTADOS_OCUPAN_ESPACIO } from '@/lib/utils';
 import { exportToExcel } from '@/lib/export';
 import { toast } from 'sonner';
 
@@ -68,6 +68,26 @@ export default function ReservasPage() {
 
   const handleUpdateEstado = async () => {
     if (!selectedReserva) return;
+
+    // Al aprobar/confirmar, evitar que dos reservas del mismo espacio ocupen la
+    // misma franja horaria. Se permiten varias reservas el mismo día si no se cruzan.
+    if ((ESTADOS_OCUPAN_ESPACIO as readonly string[]).includes(newEstado)) {
+      const { data: otras } = await supabase
+        .from('reservas_alquileres')
+        .select('id, numero_solicitud, fecha_inicio, fecha_fin, hora_inicio, hora_fin')
+        .eq('espacio_id', selectedReserva.espacio_id)
+        .in('estado', [...ESTADOS_OCUPAN_ESPACIO])
+        .neq('id', selectedReserva.id);
+      const conflicto = (otras ?? []).find(o => reservasSeCruzan(selectedReserva, o));
+      if (conflicto) {
+        toast.error(
+          `No se puede ${newEstado === 'Confirmada' ? 'confirmar' : 'aprobar'}: el espacio ya está reservado por ` +
+          `${conflicto.numero_solicitud} el ${formatDate(conflicto.fecha_inicio)} (${formatFranjaHoraria(conflicto.hora_inicio, conflicto.hora_fin)}).`
+        );
+        return;
+      }
+    }
+
     setUpdating(true);
     const { error } = await supabase.from('reservas_alquileres').update({
       estado: newEstado,
