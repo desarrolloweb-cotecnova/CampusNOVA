@@ -135,3 +135,62 @@ export function uploadPdfToSupabase(file: File): Promise<string> {
   // Retorna un blob URL temporal para PDFs (se usaría Supabase Storage en producción completa)
   return Promise.resolve(URL.createObjectURL(file));
 }
+
+// ─── Disponibilidad de espacios (reservas por franja horaria) ────────────────
+
+/**
+ * Estados de reserva que "ocupan" un espacio en el calendario. Solo estas
+ * reservas bloquean una franja horaria; una solicitud recién recibida o
+ * rechazada/cancelada no impide agendar otra reserva el mismo día.
+ */
+export const ESTADOS_OCUPAN_ESPACIO = ['Aprobada', 'Confirmada'] as const;
+
+/** Convierte "HH:MM" o "HH:MM:SS" en minutos desde medianoche. */
+export function timeToMinutes(t: string | null | undefined): number | null {
+  if (!t) return null;
+  const [h, m] = t.split(':');
+  const hh = parseInt(h, 10);
+  const mm = parseInt(m ?? '0', 10);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+  return hh * 60 + mm;
+}
+
+/** Rango de una reserva usado para detectar cruces de fecha/hora. */
+export interface RangoReserva {
+  fecha_inicio: string;
+  fecha_fin: string;
+  hora_inicio?: string | null;
+  hora_fin?: string | null;
+}
+
+/** ¿Se solapan los rangos de fechas [aIni,aFin] y [bIni,bFin]? (inclusivo). */
+export function fechasSeSolapan(aIni: string, aFin: string, bIni: string, bFin: string): boolean {
+  const ai = cleanDateString(aIni).slice(0, 10);
+  const af = cleanDateString(aFin || aIni).slice(0, 10);
+  const bi = cleanDateString(bIni).slice(0, 10);
+  const bf = cleanDateString(bFin || bIni).slice(0, 10);
+  if (!ai || !bi) return false;
+  return ai <= bf && bi <= af;
+}
+
+/**
+ * Determina si dos reservas se cruzan: sus rangos de fecha se solapan Y sus
+ * franjas horarias se solapan. Si alguna no define horas se asume día completo
+ * (00:00–24:00). El cruce horario es semiabierto, de modo que 08:00–12:00 y
+ * 12:00–16:00 NO se consideran en conflicto (son contiguas, no solapadas).
+ */
+export function reservasSeCruzan(a: RangoReserva, b: RangoReserva): boolean {
+  if (!fechasSeSolapan(a.fecha_inicio, a.fecha_fin, b.fecha_inicio, b.fecha_fin)) return false;
+  const aIni = timeToMinutes(a.hora_inicio) ?? 0;
+  const aFin = timeToMinutes(a.hora_fin) ?? 24 * 60;
+  const bIni = timeToMinutes(b.hora_inicio) ?? 0;
+  const bFin = timeToMinutes(b.hora_fin) ?? 24 * 60;
+  return aIni < bFin && bIni < aFin;
+}
+
+/** Formatea una franja horaria "HH:MM–HH:MM" a partir de horas opcionales. */
+export function formatFranjaHoraria(horaInicio?: string | null, horaFin?: string | null): string {
+  const ini = horaInicio ? horaInicio.slice(0, 5) : '00:00';
+  const fin = horaFin ? horaFin.slice(0, 5) : '23:59';
+  return `${ini}–${fin}`;
+}

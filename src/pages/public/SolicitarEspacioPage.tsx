@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, CheckCircle, Users, Building2 } from 'lucide-react';
+import { ArrowLeft, Calendar, CheckCircle, Users, Building2, Clock, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,8 +10,22 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/db/supabase';
 import type { EspacioFisico, TipoSolicitud, TipoSolicitante } from '@/types/types';
-import { generateNumeroSolicitud, formatCurrency } from '@/lib/utils';
+import {
+  generateNumeroSolicitud, formatCurrency, formatDate,
+  ESTADOS_OCUPAN_ESPACIO, fechasSeSolapan, reservasSeCruzan, timeToMinutes, formatFranjaHoraria,
+} from '@/lib/utils';
 import { toast } from 'sonner';
+
+/** Reserva que ocupa (bloquea) una franja horaria del espacio seleccionado. */
+interface OcupacionEspacio {
+  id: string;
+  numero_solicitud: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  hora_inicio: string | null;
+  hora_fin: string | null;
+  tipo: TipoSolicitud;
+}
 
 import { LOGO_URL } from '@/lib/assets';
 
@@ -25,6 +39,8 @@ export default function SolicitarEspacioPage() {
   const [numeroSolicitud, setNumeroSolicitud] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState<'catalog' | 'form'>('catalog');
+  // Reservas que ya ocupan el espacio seleccionado (para validar disponibilidad horaria).
+  const [ocupaciones, setOcupaciones] = useState<OcupacionEspacio[]>([]);
 
   const [form, setForm] = useState({
     tipo: 'Reserva' as TipoSolicitud,
@@ -40,6 +56,26 @@ export default function SolicitarEspacioPage() {
     });
   }, []);
 
+  // Carga las reservas que ocupan el espacio (Aprobadas/Confirmadas) desde hoy en
+  // adelante, para mostrar la disponibilidad horaria y evitar cruces al agendar.
+  useEffect(() => {
+    if (!selectedEspacio) { setOcupaciones([]); return; }
+    const hoy = new Date().toISOString().slice(0, 10);
+    supabase.from('reservas_alquileres')
+      .select('id, numero_solicitud, fecha_inicio, fecha_fin, hora_inicio, hora_fin, tipo')
+      .eq('espacio_id', selectedEspacio.id)
+      .in('estado', [...ESTADOS_OCUPAN_ESPACIO])
+      .gte('fecha_fin', hoy)
+      .then(({ data }) => setOcupaciones(Array.isArray(data) ? (data as OcupacionEspacio[]) : []));
+  }, [selectedEspacio]);
+
+  // Reservas que caen dentro del rango de fechas elegido (para listar el horario ocupado del día).
+  const ocupacionesDelRango = form.fecha_inicio
+    ? ocupaciones
+        .filter(o => fechasSeSolapan(form.fecha_inicio, form.fecha_fin || form.fecha_inicio, o.fecha_inicio, o.fecha_fin))
+        .sort((a, b) => (a.hora_inicio ?? '').localeCompare(b.hora_inicio ?? ''))
+    : [];
+
   const selectEspacio = (e: EspacioFisico) => {
     setSelectedEspacio(e);
     setStep('form');
@@ -51,7 +87,32 @@ export default function SolicitarEspacioPage() {
     if (!selectedEspacio) { toast.error('Selecciona un espacio'); return; }
     if (!form.nombre_solicitante.trim() || !form.correo_solicitante.trim()) { toast.error('Nombre y correo son obligatorios'); return; }
     if (!form.fecha_inicio || !form.fecha_fin) { toast.error('Las fechas son obligatorias'); return; }
+    if (!form.hora_inicio || !form.hora_fin) { toast.error('Indica la hora de inicio y de fin del uso del espacio'); return; }
+    const minInicio = timeToMinutes(form.hora_inicio);
+    const minFin = timeToMinutes(form.hora_fin);
+    if (minInicio == null || minFin == null || minFin <= minInicio) {
+      toast.error('La hora de fin debe ser posterior a la hora de inicio'); return;
+    }
     if (!form.proposito.trim()) { toast.error('Describe el propósito de la reserva'); return; }
+
+    // Disponibilidad horaria: se permiten varias reservas el mismo día siempre que
+    // las franjas no se crucen con una reserva ya aprobada/confirmada del espacio.
+    const solicitud = {
+      fecha_inicio: form.fecha_inicio,
+      fecha_fin: form.fecha_fin,
+      hora_inicio: form.hora_inicio,
+      hora_fin: form.hora_fin,
+    };
+    const conflicto = ocupaciones.find(o => reservasSeCruzan(solicitud, o));
+    if (conflicto) {
+      toast.error(
+        `El horario elegido se cruza con una reserva existente (${conflicto.numero_solicitud}, ` +
+        `${formatDate(conflicto.fecha_inicio)} ${formatFranjaHoraria(conflicto.hora_inicio, conflicto.hora_fin)}). ` +
+        'Selecciona otra franja horaria disponible.'
+      );
+      return;
+    }
+
     setSubmitting(true);
     const numero = generateNumeroSolicitud();
     const { error } = await supabase.from('reservas_alquileres').insert({
@@ -259,11 +320,11 @@ export default function SolicitarEspacioPage() {
                       <Input type="date" value={form.fecha_fin} onChange={e => setForm(f => ({ ...f, fecha_fin: e.target.value }))} min={form.fecha_inicio || new Date().toISOString().slice(0, 10)} />
                     </div>
                     <div className="space-y-2">
-                      <Label>Hora inicio</Label>
+                      <Label>Hora inicio *</Label>
                       <Input type="time" value={form.hora_inicio} onChange={e => setForm(f => ({ ...f, hora_inicio: e.target.value }))} />
                     </div>
                     <div className="space-y-2">
-                      <Label>Hora fin</Label>
+                      <Label>Hora fin *</Label>
                       <Input type="time" value={form.hora_fin} onChange={e => setForm(f => ({ ...f, hora_fin: e.target.value }))} />
                     </div>
                     <div className="space-y-2">
@@ -271,6 +332,37 @@ export default function SolicitarEspacioPage() {
                       <Input type="number" value={form.num_asistentes} onChange={e => setForm(f => ({ ...f, num_asistentes: e.target.value }))} max={selectedEspacio.capacidad_personas || 9999} />
                     </div>
                   </div>
+
+                  {/* Disponibilidad horaria del espacio para la fecha elegida */}
+                  {form.fecha_inicio && (
+                    ocupacionesDelRango.length === 0 ? (
+                      <div className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm">
+                        <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
+                        <p className="text-green-800 text-pretty">
+                          Este espacio no tiene reservas para la fecha seleccionada. Está disponible en cualquier horario.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+                        <div className="flex items-center gap-2 mb-2 text-amber-800 font-medium">
+                          <Clock className="h-4 w-4 shrink-0" />
+                          <span>Horarios ya reservados para esta fecha</span>
+                        </div>
+                        <ul className="space-y-1">
+                          {ocupacionesDelRango.map(o => (
+                            <li key={o.id} className="flex items-center gap-2 text-amber-900">
+                              <span className="font-mono font-medium">{formatFranjaHoraria(o.hora_inicio, o.hora_fin)}</span>
+                              <Badge className="bg-amber-100 text-amber-800 border-0 text-xs">{o.tipo}</Badge>
+                              <span className="text-xs text-amber-700">{o.numero_solicitud}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="text-xs text-amber-700 mt-2 text-pretty">
+                          Puedes reservar este mismo día en cualquier franja libre distinta a las anteriores.
+                        </p>
+                      </div>
+                    )
+                  )}
 
                   <div className="space-y-2">
                     <Label>Propósito del evento *</Label>
