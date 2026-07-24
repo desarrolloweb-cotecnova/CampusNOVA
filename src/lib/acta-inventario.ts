@@ -1,16 +1,13 @@
 // Generación del "Acta de Inventario de Activos Fijos" de un responsable.
-// Lista los activos fijos vigentes de cada espacio asignado al responsable,
-// con sus datos más significativos (código y estado incluidos), la nota del
-// reglamento interno y los espacios de firma (responsable, Administrador de
-// Infraestructura Física y Rector). Se descarga como PDF para imprimir.
+// Lista los activos fijos vigentes agrupados por espacio asignado y, dentro de
+// cada espacio, por categoría; ordenados por código. Incluye una columna de
+// observaciones (para diligenciar a mano), la nota del reglamento interno y los
+// espacios de firma. Optimizado para impresión (encabezado sin relleno de color,
+// logo de CampusNOVA, filas compactas y numeración de páginas).
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
 import type { ActivoFijo, EspacioFisico, Profile } from '@/types/types';
-
-/** Verde institucional COTECNOVA (#00602F). */
-const VERDE: [number, number, number] = [0, 96, 47];
-/** Verde muy claro para los encabezados de grupo (por espacio). */
-const VERDE_GRUPO: [number, number, number] = [226, 240, 233];
+import { LOGO_URL } from '@/lib/assets';
 
 /** Nota legal del reglamento interno (texto solicitado, literal). */
 const NOTA_LEGAL =
@@ -20,13 +17,6 @@ const NOTA_LEGAL =
   'causados por negligencia o indebida utilización por parte del colaborador, se le ' +
   'cargaran a este los costos de reparación o reposición del mismo. Todo activo que esté ' +
   'a su cargo no podrá ser trasladado sin previa aprobación.';
-
-const money = (n: number | null | undefined) =>
-  new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency: 'COP',
-    maximumFractionDigits: 0,
-  }).format(Number(n) || 0);
 
 /** Nombre de archivo seguro a partir del nombre del responsable. */
 function slug(nombre: string | null): string {
@@ -39,6 +29,33 @@ function slug(nombre: string | null): string {
     .toLowerCase() || 'responsable';
 }
 
+/**
+ * Rasteriza el logo SVG a PNG (jsPDF no incrusta SVG). Devuelve el dataURL y la
+ * relación de aspecto (ancho/alto). Si falla (o no hay DOM), devuelve null y el
+ * encabezado se dibuja solo con texto.
+ */
+async function cargarLogo(): Promise<{ dataUrl: string; ratio: number } | null> {
+  try {
+    if (typeof document === 'undefined') return null;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = LOGO_URL;
+    await img.decode();
+    const w = img.naturalWidth || 600;
+    const h = img.naturalHeight || 230;
+    const scale = 3; // nitidez para impresión
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return { dataUrl: canvas.toDataURL('image/png'), ratio: w / h };
+  } catch {
+    return null;
+  }
+}
+
 export interface ActaInventarioParams {
   /** Responsable al que se le levanta el acta. */
   responsable: Profile;
@@ -48,24 +65,38 @@ export interface ActaInventarioParams {
   activos: ActivoFijo[];
 }
 
-export function generarActaInventarioPDF({ responsable, espacios, activos }: ActaInventarioParams): void {
+export async function generarActaInventarioPDF({ responsable, espacios, activos }: ActaInventarioParams): Promise<void> {
+  const logo = await cargarLogo();
+
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
+  const headerBottom = 26; // y donde puede empezar el contenido bajo el encabezado
+  const footerY = pageH - 8;
 
-  // Banda de encabezado (se repite en cada página).
+  // Encabezado sin relleno de color (ahorra tinta): logo + título en negro y una
+  // línea separadora fina. Se repite en cada página.
   const drawHeader = () => {
-    doc.setFillColor(VERDE[0], VERDE[1], VERDE[2]);
-    doc.rect(0, 0, pageW, 20, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.text('CampusNOVA — COTECNOVA', margin, 9);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text('Acta de Inventario de Activos Fijos', margin, 15);
+    let textX = margin;
+    if (logo) {
+      const logoH = 13;
+      const logoW = logoH * logo.ratio;
+      doc.addImage(logo.dataUrl, 'PNG', margin, 7, logoW, logoH);
+      textX = margin + logoW + 5;
+    }
     doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.text('Acta de Inventario de Activos Fijos', textX, 13);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(90, 90, 90);
+    doc.text('CampusNOVA — COTECNOVA', textX, 18.5);
+    doc.setTextColor(0, 0, 0);
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.2);
+    doc.line(margin, 22, pageW - margin, 22);
   };
 
   drawHeader();
@@ -76,6 +107,7 @@ export function generarActaInventarioPDF({ responsable, espacios, activos }: Act
   });
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
+  doc.setTextColor(0, 0, 0);
   const col2X = pageW / 2 + 4;
   const infoRows: [string, string][] = [
     [`Responsable: ${responsable.nombre || '—'}`, `Fecha: ${fecha}`],
@@ -86,34 +118,33 @@ export function generarActaInventarioPDF({ responsable, espacios, activos }: Act
   for (const [left, right] of infoRows) {
     doc.text(left, margin, iy);
     doc.text(right, col2X, iy);
-    iy += 5;
+    iy += 4.6;
   }
 
-  // ── Tabla de activos agrupada por espacio ──────────────────────────────
-  const columns = ['Código', 'Activo', 'Categoría', 'Estado', 'Valor'];
+  // ── Tabla: agrupada por espacio y, dentro, por categoría ───────────────
+  const columns = ['Código', 'Activo', 'Estado', 'Observaciones'];
   const NCOL = columns.length;
+  const GRUPO_ESPACIO: [number, number, number] = [235, 235, 235];
   const body: RowInput[] = [];
-  let total = 0;
 
   const espaciosOrdenados = [...espacios].sort((a, b) =>
     (a.codigo || '').localeCompare(b.codigo || ''),
   );
 
   for (const esp of espaciosOrdenados) {
+    const acts = activos.filter(a => a.espacio_id === esp.id);
     const piso = esp.piso_nombre || esp.piso || '';
     const detalle = [esp.sede, esp.bloque, piso].filter(Boolean).join(' · ');
-    const titulo = `Espacio ${esp.codigo} — ${esp.nombre}${detalle ? `   (${detalle})` : ''}`;
+    const titulo =
+      `Espacio ${esp.codigo} — ${esp.nombre}${detalle ? `   (${detalle})` : ''}` +
+      `   ·   ${acts.length} activo${acts.length !== 1 ? 's' : ''}`;
     body.push([
       {
         content: titulo,
         colSpan: NCOL,
-        styles: { fillColor: VERDE_GRUPO, textColor: VERDE, fontStyle: 'bold', halign: 'left' },
+        styles: { fillColor: GRUPO_ESPACIO, textColor: [0, 0, 0], fontStyle: 'bold', halign: 'left' },
       },
     ]);
-
-    const acts = activos
-      .filter(a => a.espacio_id === esp.id)
-      .sort((a, b) => (a.codigo || '').localeCompare(b.codigo || ''));
 
     if (acts.length === 0) {
       body.push([
@@ -123,61 +154,77 @@ export function generarActaInventarioPDF({ responsable, espacios, activos }: Act
           styles: { fontStyle: 'italic', textColor: [120, 120, 120] },
         },
       ]);
-    } else {
-      for (const a of acts) {
-        total += Number(a.valor) || 0;
-        body.push([
-          a.codigo || '—',
-          a.nombre || '—',
-          a.categoria || '—',
-          a.estado || '—',
-          money(a.valor),
-        ]);
+      continue;
+    }
+
+    // Subgrupos por categoría (orden alfabético); activos ordenados por código.
+    const categorias = [...new Set(acts.map(a => a.categoria || 'Sin categoría'))]
+      .sort((a, b) => a.localeCompare(b));
+    for (const cat of categorias) {
+      body.push([
+        {
+          content: `Categoría: ${cat}`,
+          colSpan: NCOL,
+          styles: { fontStyle: 'bold', textColor: [60, 60, 60], cellPadding: { top: 1, bottom: 1, left: 6 } },
+        },
+      ]);
+      const catActs = acts
+        .filter(a => (a.categoria || 'Sin categoría') === cat)
+        .sort((a, b) => (a.codigo || '').localeCompare(b.codigo || ''));
+      for (const a of catActs) {
+        body.push([a.codigo || '—', a.nombre || '—', a.estado || '—', '']);
       }
     }
   }
 
   autoTable(doc, {
-    startY: iy + 3,
+    startY: iy + 2,
     head: [columns],
     body,
     theme: 'grid',
-    headStyles: { fillColor: VERDE, textColor: [255, 255, 255], fontSize: 8.5, fontStyle: 'bold' },
-    styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak', valign: 'middle' },
-    columnStyles: {
-      0: { cellWidth: 28 },
-      2: { cellWidth: 30 },
-      3: { cellWidth: 26 },
-      4: { cellWidth: 26, halign: 'right' },
+    headStyles: {
+      fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold',
+      fontSize: 8.5, lineColor: [150, 150, 150], lineWidth: 0.1,
     },
-    margin: { left: margin, right: margin, top: 24 },
-    // Repetir la banda de encabezado en cada página de la tabla.
+    styles: {
+      fontSize: 8, cellPadding: 1.3, overflow: 'linebreak', valign: 'middle',
+      textColor: [0, 0, 0], lineColor: [210, 210, 210], lineWidth: 0.1,
+    },
+    columnStyles: {
+      0: { cellWidth: 24 },
+      1: { cellWidth: 72 },
+      2: { cellWidth: 28 },
+      3: { cellWidth: 58 },
+    },
+    margin: { left: margin, right: margin, top: headerBottom, bottom: 16 },
+    // Repetir el encabezado en cada página de la tabla.
     didDrawPage: drawHeader,
   });
 
   // Posición tras la tabla.
-  let y = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? iy + 3;
+  let y = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? iy + 2;
 
   // Salta de página si no cabe el bloque que sigue.
   const ensure = (needed: number) => {
-    if (y + needed > pageH - margin) {
+    if (y + needed > pageH - 16) {
       doc.addPage();
       drawHeader();
-      y = 24;
+      y = headerBottom;
     }
   };
 
-  // ── Total ──────────────────────────────────────────────────────────────
-  ensure(12);
-  y += 7;
+  // ── Total de activos fijos ─────────────────────────────────────────────
+  ensure(10);
+  y += 6;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
-  doc.text(`Valor total del inventario: ${money(total)}`, pageW - margin, y, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
+  doc.text(`Total de activos fijos: ${activos.length}`, pageW - margin, y, { align: 'right' });
 
   // ── Nota legal ─────────────────────────────────────────────────────────
   const noteLines = doc.setFontSize(8).splitTextToSize(NOTA_LEGAL, pageW - margin * 2);
-  ensure(10 + noteLines.length * 3.6);
-  y += 9;
+  ensure(8 + noteLines.length * 3.6);
+  y += 8;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.text('Nota:', margin, y);
@@ -188,8 +235,8 @@ export function generarActaInventarioPDF({ responsable, espacios, activos }: Act
   y += noteLines.length * 3.6;
 
   // ── Firmas ─────────────────────────────────────────────────────────────
-  ensure(34);
-  y += 20; // espacio para firmar sobre la línea
+  ensure(32);
+  y += 18; // espacio para firmar sobre la línea
   const gap = 8;
   const colW = (pageW - margin * 2 - gap * 2) / 3;
   const firmas: { nombre: string; cargo: string }[] = [
@@ -200,8 +247,10 @@ export function generarActaInventarioPDF({ responsable, espacios, activos }: Act
   firmas.forEach((f, i) => {
     const x = margin + i * (colW + gap);
     doc.setDrawColor(70, 70, 70);
+    doc.setLineWidth(0.3);
     doc.line(x, y, x + colW, y);
     doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
     if (f.nombre) {
       doc.setFont('helvetica', 'bold');
       doc.text(doc.splitTextToSize(f.nombre, colW), x + colW / 2, y + 4, { align: 'center' });
@@ -209,6 +258,17 @@ export function generarActaInventarioPDF({ responsable, espacios, activos }: Act
     doc.setFont('helvetica', 'normal');
     doc.text(doc.splitTextToSize(f.cargo, colW), x + colW / 2, y + (f.nombre ? 8 : 4), { align: 'center' });
   });
+
+  // ── Numeración de páginas (Página X de Y) ──────────────────────────────
+  const totalPages = doc.getNumberOfPages();
+  for (let p = 1; p <= totalPages; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Página ${p} de ${totalPages}`, pageW - margin, footerY, { align: 'right' });
+  }
+  doc.setTextColor(0, 0, 0);
 
   doc.save(`acta_inventario_${slug(responsable.nombre)}.pdf`);
 }
