@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { ReservaAlquiler, EspacioFisico, EstadoReserva } from '@/types/types';
 import { getEstadoColor, formatDate, formatCurrency, cleanDateString, reservasSeCruzan, formatFranjaHoraria, ESTADOS_OCUPAN_ESPACIO } from '@/lib/utils';
 import { exportToExcel } from '@/lib/export';
@@ -46,6 +47,9 @@ export default function ReservasPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: refresca el listado cuando otro usuario cambia una reserva.
+  useRealtimeTable('reservas_alquileres', loadData);
 
   const filtered = reservas.filter(r => {
     const s = search.toLowerCase();

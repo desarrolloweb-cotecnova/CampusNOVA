@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { Intervencion, EspacioFisico, EstadoIntervencion, TipoIntervencion, Prioridad } from '@/types/types';
 import { getEstadoColor, formatDate, formatCurrency, generateCodigoIntervencion } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -63,6 +64,9 @@ export default function IntervencionesPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: refresca el listado cuando cambian las intervenciones.
+  useRealtimeTable('intervenciones', loadData);
 
   const filtered = intervenciones.filter(i => {
     const s = search.toLowerCase();

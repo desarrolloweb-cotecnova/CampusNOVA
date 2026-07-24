@@ -3,6 +3,7 @@ import { AlertTriangle, Clock, CheckCircle2, ShieldCheck, Activity } from 'lucid
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { toast } from 'sonner';
 
 export default function DashboardNovedadesPage() {
@@ -42,6 +43,9 @@ export default function DashboardNovedadesPage() {
   useEffect(() => {
     loadStats();
   }, [loadStats]);
+
+  // Realtime: recalcula las estadísticas cuando cambian las novedades.
+  useRealtimeTable('novedades_incidentes', loadStats);
 
   return (
     <AppLayout>
