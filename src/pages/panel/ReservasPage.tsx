@@ -93,14 +93,20 @@ export default function ReservasPage() {
     }
 
     setUpdating(true);
-    const { error } = await supabase.from('reservas_alquileres').update({
+    // .select('id') devuelve las filas realmente actualizadas: si RLS bloquea
+    // el cambio (rol sin permiso), llega vacío y avisamos en vez de fallar en silencio.
+    const { data: updatedRows, error } = await supabase.from('reservas_alquileres').update({
       estado: newEstado,
       motivo_rechazo: comentario || null,
       valor_acordado: valorAcordado ? parseFloat(valorAcordado) : null,
       gestionado_por: (await supabase.auth.getUser()).data.user?.id ?? null,
-    }).eq('id', selectedReserva.id);
+    }).eq('id', selectedReserva.id).select('id');
     setUpdating(false);
-    if (error) { toast.error('Error al actualizar'); return; }
+    if (error) { toast.error('Error al actualizar: ' + error.message); return; }
+    if (!updatedRows || updatedRows.length === 0) {
+      toast.error('El cambio no se guardó: tu rol no tiene permisos para gestionar reservas. Contacta al administrador.');
+      return;
+    }
     toast.success('Estado actualizado');
 
     // Notificar al solicitante si tiene correo
