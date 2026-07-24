@@ -176,7 +176,7 @@ export default function ResponsablesPage() {
   };
 
   // ─── Exportar PDF ────────────────────────────────────────────────────────────
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     const rows: (string | number)[][] = [];
     perfilesFiltrados.forEach(perfil => {
       const asigPerfil = asignaciones.filter(a => a.responsable_id === perfil.id);
@@ -198,7 +198,7 @@ export default function ResponsablesPage() {
       }
     });
 
-    exportToPDF(
+    await exportToPDF(
       'Listado de Responsables y Espacios Asignados',
       ['Responsable', 'Cargo', 'Correo', 'Cód. Espacio', 'Espacio', 'Sede', 'Bloque'],
       rows,
@@ -331,6 +331,11 @@ export default function ResponsablesPage() {
                                   <p className="text-xs text-muted-foreground">
                                     Desde: {formatDate(asig.fecha_asignacion)}
                                   </p>
+                                  {asig.observaciones && (
+                                    <p className="text-xs text-muted-foreground mt-1 text-pretty">
+                                      <span className="font-medium">Observaciones:</span> {asig.observaciones}
+                                    </p>
+                                  )}
                                 </div>
                                 <Button
                                   size="icon"

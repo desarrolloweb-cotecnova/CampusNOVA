@@ -279,8 +279,8 @@ export default function ActivosFijosPage() {
     toast.success('Excel exportado');
   };
 
-  const handleExportPDF = () => {
-    exportToPDF(
+  const handleExportPDF = async () => {
+    await exportToPDF(
       'Inventario de Activos Fijos',
       ['Código', 'Nombre', 'Categoría', 'Estado', 'Valor', 'Espacio'],
       filtered.map(a => [

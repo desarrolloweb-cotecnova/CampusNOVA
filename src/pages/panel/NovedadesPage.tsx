@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import { useRealtimeTable } from '@/hooks/use-realtime-table';
-import type { NovedadIncidente, EspacioFisico, EstadoNovedad } from '@/types/types';
+import type { NovedadIncidente, EspacioFisico, EstadoNovedad, SeguimientoNovedad } from '@/types/types';
 import { getEstadoColor, formatDateTime, formatDate } from '@/lib/utils';
 import { exportToExcel } from '@/lib/export';
 import { toast } from 'sonner';
@@ -45,6 +45,10 @@ export default function NovedadesPage() {
   const [updatingEstado, setUpdatingEstado] = useState(false);
   const [evidenciaUrl, setEvidenciaUrl] = useState('');
   const [uploadingEvidencia, setUploadingEvidencia] = useState(false);
+  // Historial de seguimientos de la novedad abierta (antes se guardaba pero
+  // nunca se mostraba, así que el usuario no podía volver a consultarlo).
+  const [historial, setHistorial] = useState<SeguimientoNovedad[]>([]);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
   const [page, setPage] = useState(1);
   const PER_PAGE = 20;
 
@@ -76,11 +80,26 @@ export default function NovedadesPage() {
   const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
 
+  /** Trae el historial de seguimientos de una novedad. */
+  const cargarHistorial = useCallback(async (novedadId: string) => {
+    setLoadingHistorial(true);
+    const { data } = await supabase
+      .from('seguimiento_novedades')
+      .select('*')
+      .eq('novedad_id', novedadId)
+      .order('created_at', { ascending: false });
+    setHistorial(Array.isArray(data) ? data as SeguimientoNovedad[] : []);
+    setLoadingHistorial(false);
+  }, []);
+
   const openDetail = (n: NovedadIncidente) => {
     setSelectedNovedad(n);
     setNewEstado(n.estado);
+    // El seguimiento es una entrada nueva del historial, por eso arranca vacío.
     setSeguimiento('');
     setEvidenciaUrl((n as NovedadIncidente & { foto_evidencia_url?: string }).foto_evidencia_url || '');
+    setHistorial([]);
+    cargarHistorial(n.id);
     setDetailOpen(true);
   };
 
@@ -108,22 +127,30 @@ export default function NovedadesPage() {
       updatePayload.foto_evidencia_url = evidenciaUrl;
     }
 
-    const { error: updErr } = await supabase
+    // .select('id') permite detectar si RLS bloqueó la escritura (0 filas) en
+    // vez de mostrar un "guardado" falso.
+    const { data: updRows, error: updErr } = await supabase
       .from('novedades_incidentes')
       .update(updatePayload)
-      .eq('id', selectedNovedad.id);
+      .eq('id', selectedNovedad.id)
+      .select('id');
 
-    if (!updErr) {
+    if (!updErr && updRows && updRows.length > 0) {
       await supabase.from('seguimiento_novedades').insert({
         novedad_id: selectedNovedad.id,
         estado_anterior: estadoAnterior,
         estado_nuevo: newEstado,
         descripcion: seguimiento,
       });
+      cargarHistorial(selectedNovedad.id);
     }
 
     setUpdatingEstado(false);
-    if (updErr) { toast.error('Error al actualizar estado'); return; }
+    if (updErr) { toast.error('Error al actualizar estado: ' + updErr.message); return; }
+    if (!updRows || updRows.length === 0) {
+      toast.error('El cambio no se guardó: tu rol no tiene permisos para gestionar novedades. Contacta al administrador.');
+      return;
+    }
     toast.success('Estado actualizado');
 
     if (selectedNovedad.correo_reportante) {
@@ -360,6 +387,30 @@ export default function NovedadesPage() {
                   <Button onClick={handleUpdateEstado} disabled={updatingEstado} className="w-full">
                     {updatingEstado ? 'Actualizando...' : 'Guardar Seguimiento'}
                   </Button>
+
+                  {/* Historial de seguimientos registrados */}
+                  <div className="border-t border-border pt-3 space-y-2">
+                    <p className="font-semibold text-sm">Historial de seguimientos</p>
+                    {loadingHistorial ? (
+                      <p className="text-xs text-muted-foreground">Cargando historial…</p>
+                    ) : historial.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">Aún no hay seguimientos registrados.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                        {historial.map(h => (
+                          <div key={h.id} className="rounded-lg border bg-muted/20 p-2.5">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="text-xs font-medium">
+                                {h.estado_anterior ? `${h.estado_anterior} → ` : ''}{h.estado_nuevo}
+                              </span>
+                              <span className="text-xs text-muted-foreground">{formatDateTime(h.created_at)}</span>
+                            </div>
+                            <p className="text-xs mt-1 text-pretty">{h.descripcion}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </DialogContent>

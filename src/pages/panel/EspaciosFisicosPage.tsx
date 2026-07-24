@@ -245,8 +245,8 @@ export default function EspaciosFisicosPage() {
     toast.success('Excel exportado');
   };
 
-  const handleExportPDF = () => {
-    exportToPDF(
+  const handleExportPDF = async () => {
+    await exportToPDF(
       'Listado de Espacios Físicos',
       ['Código', 'Nombre', 'Sede', 'Bloque', 'Piso', 'Tipo', 'Responsable', 'Estado', 'Cap.', 'Área (m²)', 'Reserva'],
       filtered.map(e => [
