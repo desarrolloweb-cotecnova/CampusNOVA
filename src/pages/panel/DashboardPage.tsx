@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatDate } from '@/lib/utils';
 
@@ -132,6 +133,14 @@ export default function DashboardPage() {
       setLoading(false);
     }
   };
+
+  // Realtime: recalcula los KPIs y listados cuando cambian reservas, novedades
+  // o intervenciones (las tres tablas publicadas en supabase_realtime).
+  useRealtimeTable(
+    ['reservas_alquileres', 'novedades_incidentes', 'intervenciones'],
+    loadDashboard,
+    { enabled: !!profile },
+  );
 
   const isResponsable = profile?.role === 'responsable';
   const kpis = [

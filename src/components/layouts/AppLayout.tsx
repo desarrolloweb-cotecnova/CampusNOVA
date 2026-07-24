@@ -15,6 +15,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { MfaGuard } from '@/components/auth/MfaGuard';
+import CuentaPendientePage from '@/pages/CuentaPendientePage';
 
 import { LOGO_URL } from '@/lib/assets';
 
@@ -212,18 +213,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Redirigir si no hay sesión o si el usuario está inactivo
+  // Redirigir al login si no hay sesión/perfil.
   useEffect(() => {
     if (loading) return;
     if (!profile) {
       navigate('/login', { replace: true });
-      return;
     }
-    if (profile.activo === false) {
-      signOut();
-      navigate('/login?inactivo=1', { replace: true });
-    }
-  }, [profile, loading, navigate, signOut]);
+  }, [profile, loading, navigate]);
 
   // Avatar: prioriza la foto guardada en el perfil; si no, la de Google.
   const avatarUrl =
@@ -242,6 +238,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     );
+  }
+
+  // Cuenta registrada pero aún no aprobada por un administrador:
+  // mostrar el aviso de "cuenta pendiente" en lugar del panel (sin exigir 2FA).
+  if (profile && profile.activo === false) {
+    return <CuentaPendientePage />;
   }
 
   // Get page title from current route

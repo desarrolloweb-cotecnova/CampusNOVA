@@ -21,6 +21,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { SpaceImage } from '@/components/ui/space-image';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { useAuth } from '@/contexts/AuthContext';
 import type {
   EspacioFisico, ActivoFijo, Intervencion,
@@ -329,6 +330,9 @@ export default function MisEspaciosPage() {
   }, [me?.id]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: refresca cuando cambian las intervenciones de los espacios.
+  useRealtimeTable('intervenciones', loadData);
 
   // ── Cambiar foto ──────────────────────────────────────────────────────────
   const handleChangeFoto = async (espacio: EspacioFisico, file: File) => {

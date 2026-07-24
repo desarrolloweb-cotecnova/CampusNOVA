@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type {
   EspacioFisico, ActivoFijo, Intervencion, EstadoEspacio,
   TipoEspacio, SedeEspacio, BloqueEspacio, Profile, AsignacionEspacio, DocumentoEspacio, FotoEspacio,
@@ -236,6 +237,9 @@ export default function EspacioDetallePage() {
   }, [id]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: refresca la ficha cuando cambian las intervenciones del espacio.
+  useRealtimeTable('intervenciones', loadData);
 
   const openEdit = () => {
     if (!espacio) return;

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import {
   format, startOfMonth, endOfMonth, startOfWeek, endOfWeek,
   addDays, addMonths, subMonths, addWeeks, subWeeks,
@@ -71,6 +72,9 @@ export default function CalendarioReservasPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: refresca el calendario cuando cambian las reservas.
+  useRealtimeTable('reservas_alquileres', loadData);
 
   const filteredEventos = eventos.filter(e => {
     const matchEst = filterEstado === 'all' || e.estado === filterEstado;

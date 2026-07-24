@@ -13,7 +13,7 @@ import { MfaEnrollCard } from '@/components/auth/MfaEnrollCard';
 type Step = 'checking' | 'verify' | 'enroll';
 
 export default function AuthCallbackPage() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('checking');
 
@@ -21,6 +21,12 @@ export default function AuthCallbackPage() {
     if (loading) return;
     if (!user) {
       navigate('/login', { replace: true });
+      return;
+    }
+    // Cuenta aún no aprobada: no exigir 2FA; el panel muestra el aviso de
+    // "cuenta pendiente".
+    if (profile && profile.activo === false) {
+      navigate('/panel', { replace: true });
       return;
     }
     let cancelled = false;
@@ -38,7 +44,7 @@ export default function AuthCallbackPage() {
         if (!cancelled) navigate('/panel', { replace: true });
       });
     return () => { cancelled = true; };
-  }, [user, loading, navigate]);
+  }, [user, profile, loading, navigate]);
 
   const goPanel = () => {
     markMfaSatisfied(user?.id ?? null);

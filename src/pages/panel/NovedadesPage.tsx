@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { NovedadIncidente, EspacioFisico, EstadoNovedad } from '@/types/types';
 import { getEstadoColor, formatDateTime, formatDate } from '@/lib/utils';
 import { exportToExcel } from '@/lib/export';
@@ -58,6 +59,9 @@ export default function NovedadesPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: refresca el listado cuando otro usuario cambia una novedad.
+  useRealtimeTable('novedades_incidentes', loadData);
 
   const tipos = [...new Set(novedades.map(n => n.tipo_novedad))];
 
