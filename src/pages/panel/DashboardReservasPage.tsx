@@ -57,17 +57,25 @@ export default function DashboardReservasPage() {
 
   const handleSave = async () => {
     setSaving(true);
+    // .select('id') devuelve las filas realmente actualizadas: si RLS bloquea
+    // la escritura (rol sin permiso), llegan vacías y avisamos en vez de
+    // mostrar un "guardado" falso.
     const updates = espacios.map(e =>
       supabase.from('espacios_fisicos').update({
         habilitado_reserva: e.habilitado_reserva,
         tarifa_alquiler: e.tarifa_alquiler !== '' ? parseFloat(e.tarifa_alquiler) : null,
-      }).eq('id', e.id)
+      }).eq('id', e.id).select('id')
     );
     const results = await Promise.all(updates);
     const firstError = results.find(r => r.error)?.error;
+    const totalActualizados = results.reduce(
+      (n, r) => n + (Array.isArray(r.data) ? r.data.length : 0), 0
+    );
     setSaving(false);
     if (firstError) {
       toast.error('Error al guardar configuración: ' + firstError.message);
+    } else if (totalActualizados === 0) {
+      toast.error('Los cambios no se guardaron: tu rol no tiene permisos para editar espacios. Contacta al administrador.');
     } else {
       toast.success('Configuración de espacios guardada');
       setDirty(false);

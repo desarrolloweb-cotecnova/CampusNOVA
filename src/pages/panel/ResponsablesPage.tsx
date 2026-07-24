@@ -155,14 +155,14 @@ export default function ResponsablesPage() {
       // Activos vigentes (no dados de baja) de los espacios asignados.
       const { data, error } = await supabase
         .from('activos_fijos')
-        .select('id,codigo,nombre,categoria,estado,valor,espacio_id,dado_de_baja')
+        .select('id,codigo,nombre,categoria,estado,espacio_id,dado_de_baja')
         .in('espacio_id', espacioIds)
         .eq('dado_de_baja', false)
         .order('codigo');
       if (error) throw error;
 
       const espaciosAsignados = espacios.filter(e => espacioIds.includes(e.id));
-      generarActaInventarioPDF({
+      await generarActaInventarioPDF({
         responsable: perfil,
         espacios: espaciosAsignados,
         activos: (Array.isArray(data) ? data : []) as ActivoFijo[],
