@@ -1,6 +1,10 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import {
+  ALTO_ENCABEZADO, ESTILOS_CABECERA_TABLA, ESTILOS_TABLA, MARGEN,
+  cargarLogoPDF, dibujarEncabezado, numerarPaginas, textoGenerado,
+} from '@/lib/pdf-base';
 
 // Exportar a Excel
 export function exportToExcel(
@@ -14,52 +18,49 @@ export function exportToExcel(
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
-// Exportar a PDF
-export function exportToPDF(
+/**
+ * Exporta un listado a PDF con el diseño institucional optimizado para impresión
+ * (ver `@/lib/pdf-base`): sin franjas de color, con logo, encabezado repetido en
+ * todas las páginas, filas compactas y numeración "Página X de Y".
+ *
+ * Es `async` porque el logo se rasteriza antes de dibujar; los llamadores deben
+ * usar `await`.
+ */
+export async function exportToPDF(
   title: string,
   columns: string[],
   rows: (string | number)[][],
   filename: string,
   columnStyles?: Record<number, object>
 ) {
+  const logo = await cargarLogoPDF();
+  // Horizontal: los listados tienen entre 6 y 11 columnas.
   const doc = new jsPDF({ orientation: 'landscape' });
+  const pageW = doc.internal.pageSize.getWidth();
 
-  // Encabezado
-  doc.setFillColor(0, 96, 47); // #00602F
-  doc.rect(0, 0, doc.internal.pageSize.width, 18, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.text('CampusNOVA — COTECNOVA', 14, 10);
-  doc.setFontSize(10);
+  const encabezado = () => dibujarEncabezado(doc, { titulo: title, logo });
+  encabezado();
+
+  // Fecha de generación (solo en la primera página).
   doc.setFont('helvetica', 'normal');
-  doc.text(title, 14, 16);
-
-  // Fecha
-  doc.setTextColor(0, 0, 0);
   doc.setFontSize(8);
-  doc.text(
-    `Generado: ${new Date().toLocaleDateString('es-CO')} ${new Date().toLocaleTimeString('es-CO')}`,
-    doc.internal.pageSize.width - 14,
-    24,
-    { align: 'right' }
-  );
+  doc.setTextColor(90, 90, 90);
+  doc.text(textoGenerado(), pageW - MARGEN, ALTO_ENCABEZADO + 1, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
 
   autoTable(doc, {
     head: [columns],
     body: rows.map(r => r.map(c => String(c))),
-    startY: 26,
-    headStyles: {
-      fillColor: [0, 96, 47],
-      textColor: [255, 255, 255],
-      fontSize: 9,
-      fontStyle: 'bold',
-    },
-    alternateRowStyles: { fillColor: [240, 250, 245] },
-    styles: { fontSize: 8, cellPadding: 3, overflow: 'linebreak' },
+    startY: ALTO_ENCABEZADO + 4,
+    theme: 'grid',
+    headStyles: ESTILOS_CABECERA_TABLA,
+    styles: ESTILOS_TABLA,
     columnStyles: columnStyles ?? {},
-    margin: { left: 14, right: 14 },
+    // `top` evita que la tabla pise el encabezado en la página 2 en adelante.
+    margin: { left: MARGEN, right: MARGEN, top: ALTO_ENCABEZADO, bottom: 16 },
+    didDrawPage: encabezado,
   });
 
+  numerarPaginas(doc);
   doc.save(`${filename}.pdf`);
 }

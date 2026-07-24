@@ -7,7 +7,10 @@
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
 import type { ActivoFijo, EspacioFisico, Profile } from '@/types/types';
-import { LOGO_URL } from '@/lib/assets';
+import {
+  ALTO_ENCABEZADO, ESTILOS_CABECERA_TABLA, ESTILOS_TABLA, GRIS_AGRUPACION, MARGEN,
+  cargarLogoPDF, dibujarEncabezado, numerarPaginas,
+} from '@/lib/pdf-base';
 
 /** Nota legal del reglamento interno (texto solicitado, literal). */
 const NOTA_LEGAL =
@@ -29,33 +32,6 @@ function slug(nombre: string | null): string {
     .toLowerCase() || 'responsable';
 }
 
-/**
- * Rasteriza el logo SVG a PNG (jsPDF no incrusta SVG). Devuelve el dataURL y la
- * relación de aspecto (ancho/alto). Si falla (o no hay DOM), devuelve null y el
- * encabezado se dibuja solo con texto.
- */
-async function cargarLogo(): Promise<{ dataUrl: string; ratio: number } | null> {
-  try {
-    if (typeof document === 'undefined') return null;
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = LOGO_URL;
-    await img.decode();
-    const w = img.naturalWidth || 600;
-    const h = img.naturalHeight || 230;
-    const scale = 3; // nitidez para impresión
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(w * scale);
-    canvas.height = Math.round(h * scale);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return { dataUrl: canvas.toDataURL('image/png'), ratio: w / h };
-  } catch {
-    return null;
-  }
-}
-
 export interface ActaInventarioParams {
   /** Responsable al que se le levanta el acta. */
   responsable: Profile;
@@ -66,38 +42,17 @@ export interface ActaInventarioParams {
 }
 
 export async function generarActaInventarioPDF({ responsable, espacios, activos }: ActaInventarioParams): Promise<void> {
-  const logo = await cargarLogo();
+  const logo = await cargarLogoPDF();
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const margin = 14;
-  const headerBottom = 26; // y donde puede empezar el contenido bajo el encabezado
-  const footerY = pageH - 8;
+  const margin = MARGEN;
+  const headerBottom = ALTO_ENCABEZADO; // y donde puede empezar el contenido
 
-  // Encabezado sin relleno de color (ahorra tinta): logo + título en negro y una
-  // línea separadora fina. Se repite en cada página.
-  const drawHeader = () => {
-    let textX = margin;
-    if (logo) {
-      const logoH = 13;
-      const logoW = logoH * logo.ratio;
-      doc.addImage(logo.dataUrl, 'PNG', margin, 7, logoW, logoH);
-      textX = margin + logoW + 5;
-    }
-    doc.setTextColor(0, 0, 0);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.text('Acta de Inventario de Activos Fijos', textX, 13);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(90, 90, 90);
-    doc.text('CampusNOVA — COTECNOVA', textX, 18.5);
-    doc.setTextColor(0, 0, 0);
-    doc.setDrawColor(180, 180, 180);
-    doc.setLineWidth(0.2);
-    doc.line(margin, 22, pageW - margin, 22);
-  };
+  // Encabezado institucional compartido (sin relleno de color, con logo).
+  const drawHeader = () =>
+    dibujarEncabezado(doc, { titulo: 'Acta de Inventario de Activos Fijos', logo });
 
   drawHeader();
 
@@ -124,7 +79,7 @@ export async function generarActaInventarioPDF({ responsable, espacios, activos 
   // ── Tabla: agrupada por espacio y, dentro, por categoría ───────────────
   const columns = ['Código', 'Activo', 'Estado', 'Observaciones'];
   const NCOL = columns.length;
-  const GRUPO_ESPACIO: [number, number, number] = [235, 235, 235];
+  const GRUPO_ESPACIO = GRIS_AGRUPACION;
   const body: RowInput[] = [];
 
   const espaciosOrdenados = [...espacios].sort((a, b) =>
@@ -182,14 +137,8 @@ export async function generarActaInventarioPDF({ responsable, espacios, activos 
     head: [columns],
     body,
     theme: 'grid',
-    headStyles: {
-      fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold',
-      fontSize: 8.5, lineColor: [150, 150, 150], lineWidth: 0.1,
-    },
-    styles: {
-      fontSize: 8, cellPadding: 1.3, overflow: 'linebreak', valign: 'middle',
-      textColor: [0, 0, 0], lineColor: [210, 210, 210], lineWidth: 0.1,
-    },
+    headStyles: ESTILOS_CABECERA_TABLA,
+    styles: ESTILOS_TABLA,
     columnStyles: {
       0: { cellWidth: 24 },
       1: { cellWidth: 72 },
@@ -260,15 +209,7 @@ export async function generarActaInventarioPDF({ responsable, espacios, activos 
   });
 
   // ── Numeración de páginas (Página X de Y) ──────────────────────────────
-  const totalPages = doc.getNumberOfPages();
-  for (let p = 1; p <= totalPages; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(120, 120, 120);
-    doc.text(`Página ${p} de ${totalPages}`, pageW - margin, footerY, { align: 'right' });
-  }
-  doc.setTextColor(0, 0, 0);
+  numerarPaginas(doc);
 
   doc.save(`acta_inventario_${slug(responsable.nombre)}.pdf`);
 }

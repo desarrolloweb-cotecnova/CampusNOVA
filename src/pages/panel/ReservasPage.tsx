@@ -65,7 +65,9 @@ export default function ReservasPage() {
   const openDetail = (r: ReservaAlquiler) => {
     setSelectedReserva(r);
     setNewEstado(r.estado);
-    setComentario('');
+    // Recargar la observación ya guardada: antes se reiniciaba en blanco, por lo
+    // que el texto persistido nunca se veía y el siguiente guardado lo borraba.
+    setComentario(r.motivo_rechazo ?? '');
     setValorAcordado(r.valor_acordado ? String(r.valor_acordado) : '');
     setDetailOpen(true);
   };
@@ -97,7 +99,7 @@ export default function ReservasPage() {
     // el cambio (rol sin permiso), llega vacío y avisamos en vez de fallar en silencio.
     const { data: updatedRows, error } = await supabase.from('reservas_alquileres').update({
       estado: newEstado,
-      motivo_rechazo: comentario || null,
+      motivo_rechazo: comentario.trim() || null,
       valor_acordado: valorAcordado ? parseFloat(valorAcordado) : null,
       gestionado_por: (await supabase.auth.getUser()).data.user?.id ?? null,
     }).eq('id', selectedReserva.id).select('id');
@@ -145,6 +147,7 @@ export default function ReservasPage() {
       'Fecha Inicio': formatDate(r.fecha_inicio),
       'Fecha Fin': formatDate(r.fecha_fin),
       Valor: r.valor_acordado ? formatCurrency(r.valor_acordado) : '',
+      'Observaciones / Motivo': r.motivo_rechazo || '',
     })), 'reservas_alquileres', 'Reservas');
     toast.success('Excel exportado');
   };
@@ -306,6 +309,12 @@ export default function ReservasPage() {
                   <div className="col-span-2"><p className="text-xs text-muted-foreground">Propósito</p><p className="font-medium text-pretty">{selectedReserva.proposito}</p></div>
                   {selectedReserva.requerimientos_especiales && (
                     <div className="col-span-2"><p className="text-xs text-muted-foreground">Requerimientos</p><p className="font-medium text-pretty">{selectedReserva.requerimientos_especiales}</p></div>
+                  )}
+                  {selectedReserva.motivo_rechazo && (
+                    <div className="col-span-2">
+                      <p className="text-xs text-muted-foreground">Observaciones registradas</p>
+                      <p className="font-medium text-pretty">{selectedReserva.motivo_rechazo}</p>
+                    </div>
                   )}
                 </div>
 

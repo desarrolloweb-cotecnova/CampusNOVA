@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import { formatDateTime } from '@/lib/utils';
+import { generarActaMovimientoPDF } from '@/lib/acta-movimiento';
 import { toast } from 'sonner';
 
 const TIPOS_MOVIMIENTO = ['Traslado', 'Préstamo', 'Cambio de responsable', 'Mantenimiento', 'Retiro temporal', 'Otro'];
@@ -64,7 +65,6 @@ export default function MovimientosPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<MovimientoForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [printMovimiento, setPrintMovimiento] = useState<MovimientoRow | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -140,58 +140,19 @@ export default function MovimientosPage() {
     loadData();
   };
 
-  const handlePrint = (m: MovimientoRow) => {
-    setPrintMovimiento(m);
-    setTimeout(() => window.print(), 300);
+  // Genera el acta como PDF con el diseño institucional (antes se imprimía
+  // el DOM con window.print()).
+  const handlePrint = async (m: MovimientoRow) => {
+    try {
+      await generarActaMovimientoPDF(m);
+    } catch (err) {
+      toast.error('Error al generar el acta: ' + (err as Error).message);
+    }
   };
 
   return (
     <AppLayout>
-      {/* Print-only acta */}
-      {printMovimiento && (
-        <div className="hidden print:block p-8 font-sans text-sm text-black">
-          <div className="text-center mb-6">
-            <p className="text-lg font-bold uppercase">CORPORACIÓN DE ESTUDIOS TECNOLÓGICOS DEL NORTE DEL VALLE</p>
-            <p className="text-base font-semibold uppercase mt-1">ACTA DE MOVIMIENTO DE ACTIVO FIJO</p>
-            <p className="text-xs mt-1">Fecha de movimiento: {printMovimiento.fecha_movimiento}</p>
-          </div>
-          <table className="w-full border-collapse border border-gray-400 mb-4 text-xs">
-            <tbody>
-              {[
-                ['Activo', `${printMovimiento.activo_nombre} (${printMovimiento.activo_codigo})`],
-                ['Tipo de movimiento', printMovimiento.tipo_movimiento],
-                ['Espacio de origen', printMovimiento.espacio_origen],
-                ['Espacio de destino', printMovimiento.espacio_destino],
-                ['Motivo', printMovimiento.motivo || '—'],
-                ['Observaciones', printMovimiento.observaciones || '—'],
-              ].map(([label, value]) => (
-                <tr key={label}>
-                  <td className="border border-gray-400 px-3 py-2 font-semibold bg-gray-100 w-40">{label}</td>
-                  <td className="border border-gray-400 px-3 py-2">{value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="font-semibold mb-4">Firmas de responsables:</p>
-          <div className="grid grid-cols-3 gap-6 mt-6">
-            {[
-              ['Persona que entrega', printMovimiento.responsable_anterior],
-              ['Persona que recibe', printMovimiento.responsable_nuevo],
-              ['Persona que aprueba', printMovimiento.aprobado_por],
-            ].map(([label, nombre]) => (
-              <div key={label} className="text-center">
-                <div className="border-b border-black mt-12 mb-1" />
-                <p className="font-semibold text-xs">{nombre || '____________________'}</p>
-                <p className="text-xs text-gray-600">{label}</p>
-                <p className="text-xs text-gray-500 mt-1">C.C.: ____________________</p>
-              </div>
-            ))}
-          </div>
-          <p className="text-center text-xs text-gray-400 mt-8">Generado por CampusNOVA — COTECNOVA</p>
-        </div>
-      )}
-
-      <div className="space-y-5 print:hidden">
+      <div className="space-y-5">
         {/* Toolbar */}
         <Card className="shadow-card">
           <CardContent className="p-4">
