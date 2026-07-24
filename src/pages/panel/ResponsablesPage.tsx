@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Users, Building2, Plus, Trash2,
-  ChevronDown, ChevronUp, Search, UserCheck, FileText,
+  ChevronDown, ChevronUp, Search, UserCheck, FileText, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -23,7 +23,8 @@ import { supabase } from '@/db/supabase';
 import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 import { exportToPDF } from '@/lib/export';
-import type { Profile, EspacioFisico, AsignacionEspacio } from '@/types/types';
+import { generarActaInventarioPDF } from '@/lib/acta-inventario';
+import type { Profile, EspacioFisico, AsignacionEspacio, ActivoFijo } from '@/types/types';
 
 const HOY = new Date().toISOString().split('T')[0];
 
@@ -58,6 +59,9 @@ export default function ResponsablesPage() {
   // Confirmar desasignar
   const [desasignarTarget, setDesasignarTarget] = useState<AsignacionEspacio | null>(null);
   const [deletingAsig, setDeletingAsig] = useState(false);
+
+  // Acta de inventario (generación en curso por responsable)
+  const [actaLoadingId, setActaLoadingId] = useState<string | null>(null);
 
   // ─── Carga de datos ─────────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -136,6 +140,40 @@ export default function ResponsablesPage() {
   const perfilesFiltrados = perfiles.filter(p =>
     !search || [p.nombre, p.email, p.cargo].some(v => v?.toLowerCase().includes(search.toLowerCase()))
   );
+
+  // ─── Acta de Inventario (PDF por responsable) ─────────────────────────────────
+  const handleActaInventario = async (perfil: Profile) => {
+    const espacioIds = asignaciones
+      .filter(a => a.responsable_id === perfil.id)
+      .map(a => a.espacio_id);
+    if (espacioIds.length === 0) {
+      toast.info('Este responsable no tiene espacios asignados.');
+      return;
+    }
+    setActaLoadingId(perfil.id);
+    try {
+      // Activos vigentes (no dados de baja) de los espacios asignados.
+      const { data, error } = await supabase
+        .from('activos_fijos')
+        .select('id,codigo,nombre,categoria,estado,valor,espacio_id,dado_de_baja')
+        .in('espacio_id', espacioIds)
+        .eq('dado_de_baja', false)
+        .order('codigo');
+      if (error) throw error;
+
+      const espaciosAsignados = espacios.filter(e => espacioIds.includes(e.id));
+      generarActaInventarioPDF({
+        responsable: perfil,
+        espacios: espaciosAsignados,
+        activos: (Array.isArray(data) ? data : []) as ActivoFijo[],
+      });
+      toast.success('Acta de inventario generada');
+    } catch (err) {
+      toast.error('Error al generar el acta: ' + (err as Error).message);
+    } finally {
+      setActaLoadingId(null);
+    }
+  };
 
   // ─── Exportar PDF ────────────────────────────────────────────────────────────
   const handleExportPDF = () => {
@@ -238,6 +276,19 @@ export default function ResponsablesPage() {
                           <Building2 className="h-3 w-3 mr-1" />
                           {asigPerfil.length} espacio{asigPerfil.length !== 1 ? 's' : ''}
                         </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 h-8"
+                          onClick={() => handleActaInventario(perfil)}
+                          disabled={actaLoadingId === perfil.id}
+                          title="Acta de inventario"
+                        >
+                          <ClipboardList className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">
+                            {actaLoadingId === perfil.id ? 'Generando…' : 'Acta de inventario'}
+                          </span>
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
