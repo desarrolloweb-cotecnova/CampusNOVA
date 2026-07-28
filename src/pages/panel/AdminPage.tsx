@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Edit, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Plus, Edit, Eye, EyeOff, Trash2, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -58,6 +58,8 @@ export default function AdminPage() {
 
   // Estado de eliminación
   const [deleteTarget, setDeleteTarget] = useState<FilaUsuario | null>(null);
+  const [mfaTarget, setMfaTarget] = useState<FilaUsuario | null>(null);
+  const [resettingMfa, setResettingMfa] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   const loadUsuarios = useCallback(async () => {
@@ -128,6 +130,29 @@ export default function AdminPage() {
       toast.error('Error al eliminar: ' + (err as Error).message);
     } finally {
       setDeleting(false);
+    }
+  };
+
+  /** Restablece el 2FA de un usuario: borra sus factores y cierra sus sesiones. */
+  const handleResetMfa = async () => {
+    if (!mfaTarget?.id) return;
+    setResettingMfa(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('reset-user-mfa', {
+        body: { userId: mfaTarget.id },
+      });
+      if (error || data?.error) throw new Error(error?.message || data?.error || 'Error desconocido');
+      toast.success(
+        data?.removedFactors > 0
+          ? 'Verificación en dos pasos restablecida'
+          : 'El usuario no tenía verificación en dos pasos configurada',
+        { description: `${mfaTarget.email} deberá configurarla en su próximo inicio de sesión.` },
+      );
+      setMfaTarget(null);
+    } catch (err: unknown) {
+      toast.error('Error al restablecer: ' + (err as Error).message);
+    } finally {
+      setResettingMfa(false);
     }
   };
 
@@ -280,6 +305,17 @@ export default function AdminPage() {
                                   <Edit className="h-3.5 w-3.5" />
                                 </Button>
                               )}
+                              {!u.precargado && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => setMfaTarget(u)}
+                                  title="Restablecer verificación en dos pasos"
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -325,6 +361,30 @@ export default function AdminPage() {
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {deleting ? 'Eliminando...' : 'Eliminar'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Confirmación de restablecimiento del segundo factor */}
+        <AlertDialog open={!!mfaTarget} onOpenChange={(open) => { if (!open) setMfaTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Restablecer verificación en dos pasos</AlertDialogTitle>
+              <AlertDialogDescription>
+                Úsalo cuando <strong>{mfaTarget?.email}</strong> haya perdido el teléfono o el
+                acceso a Google Authenticator. Se eliminará su segundo factor y se cerrarán sus
+                sesiones abiertas; la próxima vez que inicie sesión deberá escanear un código QR
+                nuevo. Su cuenta, su rol y sus datos no se ven afectados.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={resettingMfa}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); handleResetMfa(); }}
+                disabled={resettingMfa}
+              >
+                {resettingMfa ? 'Restableciendo...' : 'Restablecer'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
