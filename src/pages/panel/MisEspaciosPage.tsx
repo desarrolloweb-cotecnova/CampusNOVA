@@ -30,7 +30,7 @@ import type {
 } from '@/types/types';
 import { getEstadoColor, formatDate, formatCurrency } from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
-import { generarActaInventarioPDF } from '@/lib/acta-inventario';
+import { activosDeResponsable, generarActaInventarioPDF } from '@/lib/acta-inventario';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
 import { toast } from 'sonner';
 
@@ -339,12 +339,14 @@ export default function MisEspaciosPage() {
   useRealtimeTable('intervenciones', loadData);
 
   // ── Acta de Inventario del espacio (PDF por responsable) ──────────────────
-  // Misma acta del módulo de Responsables, limitada al espacio abierto, para
-  // que el responsable pueda descargar el inventario de su espacio asignado.
+  // Un acta por espacio y responsable: lista solo los activos que están a su
+  // nombre en el espacio abierto. Con varios espacios a cargo se descarga un
+  // acta por cada uno para verificar la tenencia espacio por espacio.
   const handleActaInventario = async (perfil: Profile) => {
     if (!selected) return;
-    if (selected.activos.length === 0) {
-      toast.info('Este espacio no tiene activos fijos vigentes.');
+    const susActivos = activosDeResponsable(selected.activos, perfil.nombre);
+    if (susActivos.length === 0) {
+      toast.info('Este responsable no tiene activos fijos a su nombre en este espacio.');
       return;
     }
     setActaLoadingId(perfil.id);
@@ -352,7 +354,7 @@ export default function MisEspaciosPage() {
       await generarActaInventarioPDF({
         responsable: perfil,
         espacios: [selected.espacio],
-        activos: selected.activos,
+        activos: susActivos,
         alcance: 'espacio',
       });
       toast.success('Acta de inventario generada');
@@ -975,9 +977,7 @@ export default function MisEspaciosPage() {
                 ) : (
                   <div className="space-y-2">
                     {selected.responsables.map(r => {
-                      const numActivos = selected.activos.filter(
-                        a => (a.responsable?.trim() || '') === (r.perfil.nombre?.trim() || '')
-                      ).length;
+                      const numActivos = activosDeResponsable(selected.activos, r.perfil.nombre).length;
                       return (
                       <div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
                         <Avatar className="h-9 w-9 shrink-0">
@@ -1010,8 +1010,10 @@ export default function MisEspaciosPage() {
                           variant="outline"
                           className="gap-1.5 h-8 shrink-0"
                           onClick={() => handleActaInventario(r.perfil)}
-                          disabled={actaLoadingId === r.perfil.id}
-                          title="Descargar el acta de inventario de los activos fijos de este espacio"
+                          disabled={actaLoadingId === r.perfil.id || numActivos === 0}
+                          title={numActivos === 0
+                            ? 'Sin activos fijos a su nombre en este espacio'
+                            : 'Descargar el acta de inventario de sus activos fijos en este espacio'}
                         >
                           <ClipboardList className="h-3.5 w-3.5" />
                           <span className="hidden md:inline">

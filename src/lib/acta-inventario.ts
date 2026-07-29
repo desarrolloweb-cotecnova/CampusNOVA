@@ -56,6 +56,16 @@ async function cargarLogo(): Promise<{ dataUrl: string; ratio: number } | null> 
   }
 }
 
+/**
+ * Activos fijos que están a nombre de un responsable. Un activo tiene un único
+ * responsable, aunque el espacio que lo alberga esté compartido entre varios:
+ * por eso el acta por espacio se levanta sobre este subconjunto.
+ */
+export function activosDeResponsable(activos: ActivoFijo[], nombre: string | null): ActivoFijo[] {
+  const objetivo = nombre?.trim() || '';
+  return activos.filter(a => (a.responsable?.trim() || '') === objetivo);
+}
+
 export interface ActaInventarioParams {
   /** Responsable al que se le levanta el acta. */
   responsable: Profile;
