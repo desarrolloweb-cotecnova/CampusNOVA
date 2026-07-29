@@ -63,9 +63,22 @@ export interface ActaInventarioParams {
   espacios: EspacioFisico[];
   /** Activos fijos vigentes de esos espacios. */
   activos: ActivoFijo[];
+  /**
+   * Alcance del acta. `'responsable'` (por defecto) se emite desde el módulo de
+   * Responsables y cubre todos los espacios a cargo. `'espacio'` se emite desde
+   * la ficha de un espacio físico y cubre únicamente ese espacio: cambia el
+   * encabezado y el nombre del archivo para dejar claro el alcance.
+   */
+  alcance?: 'responsable' | 'espacio';
 }
 
-export async function generarActaInventarioPDF({ responsable, espacios, activos }: ActaInventarioParams): Promise<void> {
+export async function generarActaInventarioPDF({
+  responsable,
+  espacios,
+  activos,
+  alcance = 'responsable',
+}: ActaInventarioParams): Promise<void> {
+  const porEspacio = alcance === 'espacio' && espacios.length === 1;
   const logo = await cargarLogo();
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -109,9 +122,13 @@ export async function generarActaInventarioPDF({ responsable, espacios, activos 
   doc.setFontSize(9);
   doc.setTextColor(0, 0, 0);
   const col2X = pageW / 2 + 4;
+  // En el acta por espacio se identifica el espacio en vez del total a cargo.
+  const alcanceLinea = porEspacio
+    ? doc.splitTextToSize(`Espacio: ${espacios[0].codigo} — ${espacios[0].nombre}`, pageW - col2X - margin)[0]
+    : `Espacios a cargo: ${espacios.length}`;
   const infoRows: [string, string][] = [
     [`Responsable: ${responsable.nombre || '—'}`, `Fecha: ${fecha}`],
-    [`Cargo: ${responsable.cargo || '—'}`, `Espacios a cargo: ${espacios.length}`],
+    [`Cargo: ${responsable.cargo || '—'}`, alcanceLinea],
     [`Correo: ${responsable.email || '—'}`, `Total de activos: ${activos.length}`],
   ];
   let iy = 28;
@@ -270,5 +287,8 @@ export async function generarActaInventarioPDF({ responsable, espacios, activos 
   }
   doc.setTextColor(0, 0, 0);
 
-  doc.save(`acta_inventario_${slug(responsable.nombre)}.pdf`);
+  const nombreArchivo = porEspacio
+    ? `acta_inventario_${slug(espacios[0].codigo)}_${slug(responsable.nombre)}.pdf`
+    : `acta_inventario_${slug(responsable.nombre)}.pdf`;
+  doc.save(nombreArchivo);
 }

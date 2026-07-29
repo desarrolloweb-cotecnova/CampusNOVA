@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Building2, Camera, Edit, Zap, Droplets, MapPin, Users,
   Package, Wrench, Plus, Search, UserCheck, ArrowLeft, ChevronLeft, ChevronRight,
-  FileText, Link2, ExternalLink, File, Sheet, Trash2, Eye,
+  FileText, Link2, ExternalLink, File, Sheet, Trash2, Eye, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +30,7 @@ import type {
 } from '@/types/types';
 import { getEstadoColor, formatDate, formatCurrency } from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
+import { generarActaInventarioPDF } from '@/lib/acta-inventario';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
 import { toast } from 'sonner';
 
@@ -200,6 +201,9 @@ export default function MisEspaciosPage() {
   const [saving, setSaving] = useState(false);
   const [uploadingImg, setUploadingImg] = useState(false);
 
+  // Acta de inventario del espacio (generación en curso por responsable)
+  const [actaLoadingId, setActaLoadingId] = useState<string | null>(null);
+
   // Dialog nuevo activo
   const [activoDialog, setActivoDialog] = useState(false);
   const [activoForm, setActivoForm] = useState({
@@ -333,6 +337,31 @@ export default function MisEspaciosPage() {
 
   // Realtime: refresca cuando cambian las intervenciones de los espacios.
   useRealtimeTable('intervenciones', loadData);
+
+  // ── Acta de Inventario del espacio (PDF por responsable) ──────────────────
+  // Misma acta del módulo de Responsables, limitada al espacio abierto, para
+  // que el responsable pueda descargar el inventario de su espacio asignado.
+  const handleActaInventario = async (perfil: Profile) => {
+    if (!selected) return;
+    if (selected.activos.length === 0) {
+      toast.info('Este espacio no tiene activos fijos vigentes.');
+      return;
+    }
+    setActaLoadingId(perfil.id);
+    try {
+      await generarActaInventarioPDF({
+        responsable: perfil,
+        espacios: [selected.espacio],
+        activos: selected.activos,
+        alcance: 'espacio',
+      });
+      toast.success('Acta de inventario generada');
+    } catch (err) {
+      toast.error('Error al generar el acta: ' + (err as Error).message);
+    } finally {
+      setActaLoadingId(null);
+    }
+  };
 
   // ── Cambiar foto ──────────────────────────────────────────────────────────
   const handleChangeFoto = async (espacio: EspacioFisico, file: File) => {
@@ -945,7 +974,11 @@ export default function MisEspaciosPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {selected.responsables.map(r => (
+                    {selected.responsables.map(r => {
+                      const numActivos = selected.activos.filter(
+                        a => (a.responsable?.trim() || '') === (r.perfil.nombre?.trim() || '')
+                      ).length;
+                      return (
                       <div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
                         <Avatar className="h-9 w-9 shrink-0">
                           <AvatarImage src={r.perfil.avatar_url || ''} />
@@ -965,8 +998,29 @@ export default function MisEspaciosPage() {
                             Desde: {formatDate(r.fecha_asignacion)}
                           </p>
                         </div>
+                        <Badge
+                          variant={numActivos > 0 ? 'secondary' : 'outline'}
+                          className="text-xs shrink-0"
+                          title="Activos fijos a nombre de este responsable en este espacio"
+                        >
+                          {numActivos} activo{numActivos !== 1 ? 's' : ''}
+                        </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 h-8 shrink-0"
+                          onClick={() => handleActaInventario(r.perfil)}
+                          disabled={actaLoadingId === r.perfil.id}
+                          title="Descargar el acta de inventario de los activos fijos de este espacio"
+                        >
+                          <ClipboardList className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">
+                            {actaLoadingId === r.perfil.id ? 'Generando…' : 'Acta de inventario'}
+                          </span>
+                        </Button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

@@ -4,7 +4,7 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight,
   Building2, Users, MapPin, Zap, Droplets, Package,
   Calendar, FileText, Edit, Trash2, Camera, Plus, Search,
-  UserCheck, Wrench, Link2, ExternalLink, File, Sheet, Eye,
+  UserCheck, Wrench, Link2, ExternalLink, File, Sheet, Eye, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,7 @@ import type {
 } from '@/types/types';
 import { getEstadoColor, formatDate, formatCurrency } from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
+import { generarActaInventarioPDF } from '@/lib/acta-inventario';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
 import { toast } from 'sonner';
 
@@ -99,6 +100,8 @@ export default function EspacioDetallePage() {
   ]);
   const [catEstados, setCatEstados] = useState<string[]>(['Bueno', 'Regular', 'Requiere intervención']);
   const [asignarDialog, setAsignarDialog] = useState(false);
+  // Acta de inventario del espacio (generación en curso por responsable)
+  const [actaLoadingId, setActaLoadingId] = useState<string | null>(null);
   const [perfilesSeleccionados, setPerfilesSeleccionados] = useState<string[]>([]);
   const [buscarPerfil, setBuscarPerfil] = useState('');
   const [savingAsig, setSavingAsig] = useState(false);
@@ -426,6 +429,31 @@ export default function EspacioDetallePage() {
     if (error) { toast.error('Error al desasignar'); return; }
     toast.success('Responsable desasignado');
     loadData();
+  };
+
+  // ─── Acta de Inventario del espacio (PDF por responsable) ───────────────────
+  // Misma acta del módulo de Responsables, pero limitada a este espacio: así el
+  // responsable que solo tiene acceso a su espacio puede descargarla desde aquí.
+  const handleActaInventario = async (perfil: Profile) => {
+    if (!espacio) return;
+    if (activos.length === 0) {
+      toast.info('Este espacio no tiene activos fijos vigentes.');
+      return;
+    }
+    setActaLoadingId(perfil.id);
+    try {
+      await generarActaInventarioPDF({
+        responsable: perfil,
+        espacios: [espacio],
+        activos,
+        alcance: 'espacio',
+      });
+      toast.success('Acta de inventario generada');
+    } catch (err) {
+      toast.error('Error al generar el acta: ' + (err as Error).message);
+    } finally {
+      setActaLoadingId(null);
+    }
   };
 
   // ─── Traslado de activos entre responsables del espacio ─────────────────────
@@ -965,6 +993,19 @@ export default function EspacioDetallePage() {
                         >
                           {numActivos} activo{numActivos !== 1 ? 's' : ''}
                         </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 h-8 shrink-0"
+                          onClick={() => handleActaInventario(r.perfil)}
+                          disabled={actaLoadingId === r.perfil.id}
+                          title="Descargar el acta de inventario de los activos fijos de este espacio"
+                        >
+                          <ClipboardList className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">
+                            {actaLoadingId === r.perfil.id ? 'Generando…' : 'Acta de inventario'}
+                          </span>
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
