@@ -4,7 +4,7 @@ import {
   ArrowLeft, ChevronLeft, ChevronRight,
   Building2, Users, MapPin, Zap, Droplets, Package,
   Calendar, FileText, Edit, Trash2, Camera, Plus, Search,
-  UserCheck, Wrench, Link2, ExternalLink, File, Sheet, Eye,
+  UserCheck, Wrench, Link2, ExternalLink, File, Sheet, Eye, ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,7 @@ import type {
 } from '@/types/types';
 import { getEstadoColor, formatDate, formatCurrency } from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
+import { activosDeResponsable, generarActaInventarioPDF } from '@/lib/acta-inventario';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
 import { toast } from 'sonner';
 
@@ -99,6 +100,8 @@ export default function EspacioDetallePage() {
   ]);
   const [catEstados, setCatEstados] = useState<string[]>(['Bueno', 'Regular', 'Requiere intervención']);
   const [asignarDialog, setAsignarDialog] = useState(false);
+  // Acta de inventario del espacio (generación en curso por responsable)
+  const [actaLoadingId, setActaLoadingId] = useState<string | null>(null);
   const [perfilesSeleccionados, setPerfilesSeleccionados] = useState<string[]>([]);
   const [buscarPerfil, setBuscarPerfil] = useState('');
   const [savingAsig, setSavingAsig] = useState(false);
@@ -409,9 +412,7 @@ export default function EspacioDetallePage() {
 
   const handleDesasignarResponsable = async (asigId: string, nombreResp: string | null) => {
     // Cuántos activos del espacio siguen a nombre de este responsable
-    const conActivos = activos.filter(
-      a => (a.responsable?.trim() || '') === (nombreResp?.trim() || '')
-    ).length;
+    const conActivos = activosDeResponsable(activos, nombreResp).length;
     if (conActivos > 0) {
       const ok = window.confirm(
         `Este responsable todavía tiene ${conActivos} activo(s) fijo(s) a su nombre en este espacio. ` +
@@ -426,6 +427,33 @@ export default function EspacioDetallePage() {
     if (error) { toast.error('Error al desasignar'); return; }
     toast.success('Responsable desasignado');
     loadData();
+  };
+
+  // ─── Acta de Inventario del espacio (PDF por responsable) ───────────────────
+  // Un acta por espacio y responsable: lista solo los activos que están a su
+  // nombre en este espacio. Quien tiene varios espacios a cargo descarga un acta
+  // por cada uno; el acta consolidada de todos vive en el módulo de Responsables.
+  const handleActaInventario = async (perfil: Profile) => {
+    if (!espacio) return;
+    const susActivos = activosDeResponsable(activos, perfil.nombre);
+    if (susActivos.length === 0) {
+      toast.info('Este responsable no tiene activos fijos a su nombre en este espacio.');
+      return;
+    }
+    setActaLoadingId(perfil.id);
+    try {
+      await generarActaInventarioPDF({
+        responsable: perfil,
+        espacios: [espacio],
+        activos: susActivos,
+        alcance: 'espacio',
+      });
+      toast.success('Acta de inventario generada');
+    } catch (err) {
+      toast.error('Error al generar el acta: ' + (err as Error).message);
+    } finally {
+      setActaLoadingId(null);
+    }
   };
 
   // ─── Traslado de activos entre responsables del espacio ─────────────────────
@@ -940,9 +968,7 @@ export default function EspacioDetallePage() {
                 ) : (
                   <div className="space-y-2">
                     {responsables.map(r => {
-                      const numActivos = activos.filter(
-                        a => (a.responsable?.trim() || '') === (r.perfil.nombre?.trim() || '')
-                      ).length;
+                      const numActivos = activosDeResponsable(activos, r.perfil.nombre).length;
                       return (
                       <div key={r.id} className="flex items-center gap-3 rounded-lg border p-3">
                         <Avatar className="h-9 w-9 shrink-0">
@@ -965,6 +991,21 @@ export default function EspacioDetallePage() {
                         >
                           {numActivos} activo{numActivos !== 1 ? 's' : ''}
                         </Badge>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 h-8 shrink-0"
+                          onClick={() => handleActaInventario(r.perfil)}
+                          disabled={actaLoadingId === r.perfil.id || numActivos === 0}
+                          title={numActivos === 0
+                            ? 'Sin activos fijos a su nombre en este espacio'
+                            : 'Descargar el acta de inventario de sus activos fijos en este espacio'}
+                        >
+                          <ClipboardList className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">
+                            {actaLoadingId === r.perfil.id ? 'Generando…' : 'Acta de inventario'}
+                          </span>
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"
