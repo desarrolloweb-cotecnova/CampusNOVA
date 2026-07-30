@@ -3,8 +3,9 @@ import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, Building2, AlertTriangle, Calendar,
   Settings, User, LogOut, Menu, X, ChevronDown, ChevronRight,
-  Bell, Search, UserCheck, ShieldCheck
+  Search, UserCheck, ShieldCheck
 } from 'lucide-react';
+import { AlertasMantenimiento } from '@/components/common/AlertasMantenimiento';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
@@ -308,15 +309,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative"
-                onClick={() => navigate('/panel/novedades')}
-              >
-                <Bell className="h-5 w-5" />
-                <span className="sr-only">Notificaciones</span>
-              </Button>
+              <AlertasMantenimiento />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="h-9 px-1 pr-2 flex items-center gap-2 rounded-full hover:bg-accent">

@@ -5,6 +5,7 @@ import {
   Building2, Users, MapPin, Zap, Droplets, Package,
   Calendar, FileText, Edit, Trash2, Camera, Plus, Search,
   UserCheck, Wrench, Link2, ExternalLink, File, Sheet, Eye, ClipboardList,
+  CalendarClock, CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,11 +28,16 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import { useRealtimeTable } from '@/hooks/use-realtime-table';
+import { hasRole, useAuth } from '@/contexts/AuthContext';
 import type {
-  EspacioFisico, ActivoFijo, Intervencion, EstadoEspacio,
+  EspacioFisico, ActivoFijo, Intervencion, EstadoEspacio, FrecuenciaIntervencion,
   TipoEspacio, SedeEspacio, BloqueEspacio, Profile, AsignacionEspacio, DocumentoEspacio, FotoEspacio,
 } from '@/types/types';
-import { getEstadoColor, formatDate, formatCurrency } from '@/lib/utils';
+import {
+  getEstadoColor, formatDate, formatCurrency,
+  FRECUENCIAS_INTERVENCION, getAlertaRepeticion, labelFrecuencia, sumarFrecuencia,
+  DIAS_ANTICIPACION_ALERTA, type AlertaRepeticion,
+} from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
 import { activosDeResponsable, generarActaInventarioPDF } from '@/lib/acta-inventario';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
@@ -66,6 +72,9 @@ export default function EspacioDetallePage() {
   const [espacio, setEspacio] = useState<EspacioFisico | null>(null);
   const [activos, setActivos] = useState<ActivoFijo[]>([]);
   const [intervenciones, setIntervenciones] = useState<Intervencion[]>([]);
+  // Intervenciones con repetición programada de este espacio (todas, no solo
+  // las 20 más recientes): alimentan la alerta de la ficha técnica.
+  const [repeticiones, setRepeticiones] = useState<Intervencion[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Navegación entre espacios
@@ -131,9 +140,17 @@ export default function EspacioDetallePage() {
     prioridad: 'Media' as Intervencion['prioridad'],
     fecha_solicitud: new Date().toISOString().split('T')[0],
     evidencia_foto_url: '',
+    requiere_repeticion: false,
+    frecuencia_repeticion: 'Semestral' as FrecuenciaIntervencion,
+    fecha_proxima_intervencion: '',
   });
   const [savingInterv, setSavingInterv] = useState(false);
   const [uploadingIntervImg, setUploadingIntervImg] = useState(false);
+  const [marcandoIntervId, setMarcandoIntervId] = useState<string | null>(null);
+  const { profile } = useAuth();
+  // Registrar la repetición implica actualizar la intervención: solo los roles
+  // con permiso de escritura (política RLS) ven la acción.
+  const puedeGestionarIntervenciones = hasRole(profile, ['admin', 'rector', 'infraestructura']);
 
   // Documentos
   const [documentos, setDocumentos] = useState<DocumentoEspacio[]>([]);
@@ -192,6 +209,7 @@ export default function EspacioDetallePage() {
       { data: estadosEspData },
       { data: allIdsData },
       { data: fotosData },
+      { data: repData },
     ] = await Promise.all([
       supabase.from('espacios_fisicos').select('*').eq('id', id).maybeSingle(),
       supabase.from('activos_fijos').select('*').eq('espacio_id', id).eq('dado_de_baja', false).order('nombre'),
@@ -209,10 +227,12 @@ export default function EspacioDetallePage() {
       supabase.from('estados_espacios').select('nombre').eq('activo', true).order('nombre'),
       supabase.from('espacios_fisicos').select('id').order('codigo'),
       supabase.from('fotos_espacios').select('*').eq('espacio_id', id).order('orden').order('created_at'),
+      supabase.from('intervenciones').select('*').eq('espacio_id', id).eq('requiere_repeticion', true).order('fecha_proxima_intervencion'),
     ]);
     setEspacio(espData);
     setActivos(Array.isArray(actData) ? actData : []);
     setIntervenciones(Array.isArray(intData) ? intData : []);
+    setRepeticiones(Array.isArray(repData) ? repData : []);
     setCatCategorias(Array.isArray(catData) ? catData.map(c => c.nombre) : []);
     setCatEstadosActivo(Array.isArray(estadosData) ? estadosData.map(e => e.nombre) : []);
     setCatProveedores(Array.isArray(provData) ? provData : []);
@@ -567,8 +587,49 @@ export default function EspacioDetallePage() {
       prioridad: 'Media',
       fecha_solicitud: new Date().toISOString().split('T')[0],
       evidencia_foto_url: '',
+      requiere_repeticion: false,
+      frecuencia_repeticion: 'Semestral',
+      fecha_proxima_intervencion: '',
     });
     setIntervDialog(true);
+  };
+
+  /** Propone la próxima fecha sumando la frecuencia a la fecha de solicitud. */
+  const proponerProximaIntervencion = (
+    fechaSolicitud: string,
+    frecuencia: FrecuenciaIntervencion,
+  ) => sumarFrecuencia(fechaSolicitud || new Date().toISOString().split('T')[0], frecuencia);
+
+  const toggleRepeticionInterv = (activa: boolean) => {
+    setIntervForm(f => ({
+      ...f,
+      requiere_repeticion: activa,
+      fecha_proxima_intervencion: activa
+        ? f.fecha_proxima_intervencion || proponerProximaIntervencion(f.fecha_solicitud, f.frecuencia_repeticion)
+        : '',
+    }));
+  };
+
+  const cambiarFrecuenciaInterv = (frecuencia: FrecuenciaIntervencion) => {
+    setIntervForm(f => ({
+      ...f,
+      frecuencia_repeticion: frecuencia,
+      fecha_proxima_intervencion: f.requiere_repeticion
+        ? proponerProximaIntervencion(f.fecha_solicitud, frecuencia)
+        : f.fecha_proxima_intervencion,
+    }));
+  };
+
+  /** Registra que la repetición ya se hizo y reprograma la siguiente fecha. */
+  const marcarIntervencionRealizada = async (item: Intervencion) => {
+    setMarcandoIntervId(item.id);
+    const { data, error } = await supabase.rpc('registrar_repeticion_intervencion', {
+      p_intervencion_id: item.id,
+    });
+    setMarcandoIntervId(null);
+    if (error) { toast.error('No se pudo registrar la repetición: ' + error.message); return; }
+    toast.success(`Repetición registrada. Próxima intervención: ${formatDate(data as string)}`);
+    loadData();
   };
 
   const handleUploadIntervImg = async (file: File) => {
@@ -586,6 +647,10 @@ export default function EspacioDetallePage() {
     if (!espacio) return;
     if (!intervForm.descripcion_problema.trim()) {
       toast.error('La descripción del problema es obligatoria');
+      return;
+    }
+    if (intervForm.requiere_repeticion && !intervForm.fecha_proxima_intervencion) {
+      toast.error('Indica la fecha en la que debe repetirse la intervención');
       return;
     }
     setSavingInterv(true);
@@ -607,6 +672,9 @@ export default function EspacioDetallePage() {
       estado: 'Solicitud' as Intervencion['estado'],
       fecha_solicitud: intervForm.fecha_solicitud,
       evidencia_foto_url: intervForm.evidencia_foto_url || null,
+      requiere_repeticion: intervForm.requiere_repeticion,
+      frecuencia_repeticion: intervForm.requiere_repeticion ? intervForm.frecuencia_repeticion : null,
+      fecha_proxima_intervencion: intervForm.requiere_repeticion ? intervForm.fecha_proxima_intervencion : null,
     });
     setSavingInterv(false);
     if (error) { toast.error('Error al guardar intervención: ' + error.message); return; }
@@ -661,6 +729,14 @@ export default function EspacioDetallePage() {
     { icon: Building2, label: 'Habilitado para Reserva', value: espacio.habilitado_reserva ? 'Sí' : 'No' },
   ];
 
+  // Repeticiones programadas del espacio, ordenadas por urgencia.
+  const alertasRepeticion = repeticiones
+    .map(i => ({ intervencion: i, alerta: getAlertaRepeticion(i) }))
+    .filter((r): r is { intervencion: Intervencion; alerta: AlertaRepeticion } => r.alerta !== null)
+    .sort((a, b) => a.alerta.dias - b.alerta.dias);
+  const alertasActivas = alertasRepeticion.filter(r => r.alerta.nivel !== 'programada');
+  const hayVencidas = alertasActivas.some(r => r.alerta.nivel === 'vencida');
+
   return (
     <AppLayout>
       <div className="space-y-5">
@@ -701,6 +777,48 @@ export default function EspacioDetallePage() {
             </div>
           );
         })()}
+
+        {/* Alerta de intervenciones que deben repetirse */}
+        {alertasActivas.length > 0 && (
+          <div
+            className={`rounded-lg border p-4 space-y-3 ${
+              hayVencidas ? 'border-red-200 bg-red-50' : 'border-yellow-200 bg-yellow-50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <CalendarClock className={`h-4 w-4 shrink-0 ${hayVencidas ? 'text-red-600' : 'text-yellow-700'}`} />
+              <p className={`text-sm font-semibold ${hayVencidas ? 'text-red-800' : 'text-yellow-800'}`}>
+                {hayVencidas
+                  ? 'Este espacio tiene intervenciones vencidas que deben repetirse'
+                  : 'Este espacio tiene intervenciones próximas a repetirse'}
+              </p>
+            </div>
+            <div className="space-y-2">
+              {alertasActivas.map(({ intervencion, alerta }) => (
+                <div key={intervencion.id} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="font-medium">{intervencion.tipo}</span>
+                  <span className="text-xs text-muted-foreground font-mono">{intervencion.codigo}</span>
+                  <Badge className={`${alerta.badgeClass} border-0 text-xs`}>{alerta.etiqueta}</Badge>
+                  <span className="text-xs text-muted-foreground">
+                    Programada para {formatDate(alerta.fecha)} · {labelFrecuencia(alerta.frecuencia)}
+                  </span>
+                  {puedeGestionarIntervenciones && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5"
+                      disabled={marcandoIntervId === intervencion.id}
+                      onClick={() => marcarIntervencionRealizada(intervencion)}
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {marcandoIntervId === intervencion.id ? 'Registrando…' : 'Marcar realizada'}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Carrusel de fotos */}
         <div className="space-y-2">
@@ -908,6 +1026,60 @@ export default function EspacioDetallePage() {
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
+                <Card className="shadow-card">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <CalendarClock className="h-4 w-4" /> Intervenciones programadas
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {alertasRepeticion.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Este espacio no tiene intervenciones con repetición programada.
+                      </p>
+                    ) : (
+                      alertasRepeticion.map(({ intervencion, alerta }) => (
+                        <div key={intervencion.id} className="rounded-lg border p-3 space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{intervencion.tipo}</p>
+                              <p className="text-xs text-muted-foreground font-mono">{intervencion.codigo}</p>
+                            </div>
+                            <Badge className={`${alerta.badgeClass} border-0 text-xs shrink-0`}>
+                              {alerta.etiqueta}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Próxima intervención:</span>
+                            <span className="font-semibold">{formatDate(alerta.fecha)}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Se repite:</span>
+                            <span className="font-medium">{labelFrecuencia(alerta.frecuencia)}</span>
+                          </div>
+                          {intervencion.fecha_ultima_repeticion && (
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">Última vez realizada:</span>
+                              <span className="font-medium">{formatDate(intervencion.fecha_ultima_repeticion)}</span>
+                            </div>
+                          )}
+                          {puedeGestionarIntervenciones && alerta.nivel !== 'programada' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full mt-1 gap-1.5"
+                              disabled={marcandoIntervId === intervencion.id}
+                              onClick={() => marcarIntervencionRealizada(intervencion)}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              {marcandoIntervId === intervencion.id ? 'Registrando…' : 'Marcar como realizada'}
+                            </Button>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
                 <Card className="shadow-card">
                   <CardHeader><CardTitle className="text-base">Descripción del Espacio</CardTitle></CardHeader>
                   <CardContent>
@@ -1206,6 +1378,30 @@ export default function EspacioDetallePage() {
                               <span className="font-medium">{formatCurrency(i.costo)}</span>
                             </div>
                           )}
+                          {(() => {
+                            const alerta = getAlertaRepeticion(i);
+                            if (!alerta) return null;
+                            return (
+                              <div className="col-span-2 flex flex-wrap items-center gap-2">
+                                <span className="text-muted-foreground">Próxima repetición: </span>
+                                <span className="font-medium">{formatDate(alerta.fecha)}</span>
+                                <Badge className={`${alerta.badgeClass} border-0 text-xs`}>{alerta.etiqueta}</Badge>
+                                <span className="text-muted-foreground">({labelFrecuencia(alerta.frecuencia)})</span>
+                                {puedeGestionarIntervenciones && alerta.nivel !== 'programada' && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 gap-1.5"
+                                    disabled={marcandoIntervId === i.id}
+                                    onClick={() => marcarIntervencionRealizada(i)}
+                                  >
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    {marcandoIntervId === i.id ? 'Registrando…' : 'Marcar realizada'}
+                                  </Button>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     ))}
@@ -1692,6 +1888,53 @@ export default function EspacioDetallePage() {
                     {uploadingIntervImg ? 'Subiendo...' : 'Adjuntar imagen'}
                   </Button>
                   <p className="text-xs text-muted-foreground mt-1">Máx. 5 MB. JPG, PNG o WEBP.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Repetición programada */}
+            <div className="md:col-span-2 space-y-3 rounded-lg border bg-muted/30 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Label className="flex items-center gap-1.5">
+                    <CalendarClock className="h-4 w-4" /> ¿Debe repetirse esta intervención?
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Programa la fecha en que debe volver a realizarse. Quedará visible en la
+                    ficha del espacio y el sistema avisará desde {DIAS_ANTICIPACION_ALERTA} días
+                    antes, hasta que se registre como realizada.
+                  </p>
+                </div>
+                <Switch
+                  className="shrink-0 mt-1"
+                  checked={intervForm.requiere_repeticion}
+                  onCheckedChange={toggleRepeticionInterv}
+                />
+              </div>
+              {intervForm.requiere_repeticion && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Frecuencia</Label>
+                    <Select
+                      value={intervForm.frecuencia_repeticion}
+                      onValueChange={v => cambiarFrecuenciaInterv(v as FrecuenciaIntervencion)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {FRECUENCIAS_INTERVENCION.map(f => (
+                          <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Fecha de la próxima intervención <span className="text-destructive">*</span></Label>
+                    <Input
+                      type="date"
+                      value={intervForm.fecha_proxima_intervencion}
+                      onChange={e => setIntervForm(f => ({ ...f, fecha_proxima_intervencion: e.target.value }))}
+                    />
+                  </div>
                 </div>
               )}
             </div>
