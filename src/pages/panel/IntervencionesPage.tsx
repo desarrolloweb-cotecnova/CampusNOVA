@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, CalendarClock, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -7,13 +7,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import { useRealtimeTable } from '@/hooks/use-realtime-table';
-import type { Intervencion, EspacioFisico, EstadoIntervencion, TipoIntervencion, Prioridad } from '@/types/types';
-import { getEstadoColor, formatDate, formatCurrency, generateCodigoIntervencion } from '@/lib/utils';
+import { hasRole, useAuth } from '@/contexts/AuthContext';
+import type {
+  Intervencion, EspacioFisico, EstadoIntervencion, TipoIntervencion, Prioridad,
+  FrecuenciaIntervencion,
+} from '@/types/types';
+import {
+  getEstadoColor, formatDate, formatCurrency, generateCodigoIntervencion,
+  FRECUENCIAS_INTERVENCION, getAlertaRepeticion, labelFrecuencia, sumarFrecuencia,
+  DIAS_ANTICIPACION_ALERTA,
+} from '@/lib/utils';
 import { toast } from 'sonner';
 
 const TIPOS: TipoIntervencion[] = [
@@ -30,6 +39,8 @@ interface IntForm {
   estado: EstadoIntervencion; fecha_inicio: string; fecha_fin: string;
   contratista_responsable: string; descripcion_trabajos: string;
   materiales_utilizados: string; costo: string; observaciones: string;
+  requiere_repeticion: boolean; frecuencia_repeticion: FrecuenciaIntervencion;
+  fecha_proxima_intervencion: string;
 }
 
 const INIT: IntForm = {
@@ -38,7 +49,11 @@ const INIT: IntForm = {
   estado: 'Solicitud', fecha_inicio: '', fecha_fin: '',
   contratista_responsable: '', descripcion_trabajos: '',
   materiales_utilizados: '', costo: '', observaciones: '',
+  requiere_repeticion: false, frecuencia_repeticion: 'Semestral',
+  fecha_proxima_intervencion: '',
 };
+
+const hoyISO = () => new Date().toISOString().split('T')[0];
 
 export default function IntervencionesPage() {
   const [intervenciones, setIntervenciones] = useState<(Intervencion & { espacio?: EspacioFisico })[]>([]);
@@ -47,10 +62,16 @@ export default function IntervencionesPage() {
   const [search, setSearch] = useState('');
   const [filterEstado, setFilterEstado] = useState('all');
   const [filterPrioridad, setFilterPrioridad] = useState('all');
+  const [filterRepeticion, setFilterRepeticion] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Intervencion | null>(null);
   const [form, setForm] = useState<IntForm>(INIT);
   const [saving, setSaving] = useState(false);
+  const [marcandoId, setMarcandoId] = useState<string | null>(null);
+  const { profile } = useAuth();
+  // Solo quien puede actualizar intervenciones (política RLS) ve la acción de
+  // registrar que la repetición ya se hizo.
+  const puedeGestionar = hasRole(profile, ['admin', 'rector', 'infraestructura']);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -73,7 +94,13 @@ export default function IntervencionesPage() {
     const matchSearch = !search || [i.codigo, i.tipo, i.descripcion_problema, (i.espacio as EspacioFisico)?.nombre].some(f => f?.toLowerCase().includes(s));
     const matchEst = filterEstado === 'all' || i.estado === filterEstado;
     const matchPri = filterPrioridad === 'all' || i.prioridad === filterPrioridad;
-    return matchSearch && matchEst && matchPri;
+    const alerta = getAlertaRepeticion(i);
+    const matchRep =
+      filterRepeticion === 'all'
+        || (filterRepeticion === 'recurrente' && !!alerta)
+        || (filterRepeticion === 'alerta' && !!alerta && alerta.nivel !== 'programada')
+        || (filterRepeticion === 'vencida' && alerta?.nivel === 'vencida');
+    return matchSearch && matchEst && matchPri && matchRep;
   });
 
   const openCreate = () => { setEditingItem(null); setForm(INIT); setDialogOpen(true); };
@@ -88,13 +115,59 @@ export default function IntervencionesPage() {
       descripcion_trabajos: item.descripcion_trabajos || '',
       materiales_utilizados: item.materiales_utilizados || '',
       costo: item.costo ? String(item.costo) : '', observaciones: item.observaciones || '',
+      requiere_repeticion: item.requiere_repeticion ?? false,
+      frecuencia_repeticion: item.frecuencia_repeticion ?? 'Semestral',
+      fecha_proxima_intervencion: item.fecha_proxima_intervencion?.slice(0, 10) || '',
     });
     setDialogOpen(true);
+  };
+
+  /**
+   * Al activar la repetición (o cambiar la frecuencia) se propone la próxima
+   * fecha sumando la frecuencia a la fecha de fin, de inicio o a hoy.
+   */
+  const proponerProximaFecha = (f: IntForm, frecuencia: FrecuenciaIntervencion) =>
+    sumarFrecuencia(f.fecha_fin || f.fecha_inicio || hoyISO(), frecuencia);
+
+  const toggleRepeticion = (activa: boolean) => {
+    setForm(f => ({
+      ...f,
+      requiere_repeticion: activa,
+      fecha_proxima_intervencion: activa
+        ? f.fecha_proxima_intervencion || proponerProximaFecha(f, f.frecuencia_repeticion)
+        : '',
+    }));
+  };
+
+  const cambiarFrecuencia = (frecuencia: FrecuenciaIntervencion) => {
+    setForm(f => ({
+      ...f,
+      frecuencia_repeticion: frecuencia,
+      fecha_proxima_intervencion: f.requiere_repeticion
+        ? proponerProximaFecha(f, frecuencia)
+        : f.fecha_proxima_intervencion,
+    }));
+  };
+
+  /** Registra que la repetición ya se realizó y reprograma la siguiente. */
+  const marcarRealizada = async (item: Intervencion) => {
+    setMarcandoId(item.id);
+    const { data, error } = await supabase.rpc('registrar_repeticion_intervencion', {
+      p_intervencion_id: item.id,
+    });
+    setMarcandoId(null);
+    if (error) { toast.error('No se pudo registrar la repetición: ' + error.message); return; }
+    toast.success(`Repetición registrada. Próxima intervención: ${formatDate(data as string)}`);
+    loadData();
   };
 
   const handleSave = async () => {
     if (!form.descripcion_problema.trim()) { toast.error('La descripción del problema es obligatoria'); return; }
     if (!form.espacio_id || form.espacio_id === 'none') { toast.error('Selecciona un espacio'); return; }
+    if (form.requiere_repeticion && !form.fecha_proxima_intervencion) {
+      toast.error('Indica la fecha en la que debe repetirse la intervención');
+      return;
+    }
     setSaving(true);
     const payload = {
       espacio_id: form.espacio_id, tipo: form.tipo,
@@ -108,6 +181,9 @@ export default function IntervencionesPage() {
       materiales_utilizados: form.materiales_utilizados || null,
       costo: form.costo ? parseFloat(form.costo) : null,
       observaciones: form.observaciones || null,
+      requiere_repeticion: form.requiere_repeticion,
+      frecuencia_repeticion: form.requiere_repeticion ? form.frecuencia_repeticion : null,
+      fecha_proxima_intervencion: form.requiere_repeticion ? form.fecha_proxima_intervencion : null,
     };
     let error;
     if (editingItem) {
@@ -124,16 +200,27 @@ export default function IntervencionesPage() {
 
   const countByEstado = (est: string) => intervenciones.filter(i => i.estado === est).length;
 
+  // Alertas de repetición: vencidas y próximas dentro de la anticipación.
+  const alertas = intervenciones
+    .map(i => ({ intervencion: i, alerta: getAlertaRepeticion(i) }))
+    .filter(a => a.alerta && a.alerta.nivel !== 'programada');
+  const vencidas = alertas.filter(a => a.alerta?.nivel === 'vencida').length;
+
   return (
     <AppLayout>
       <div className="space-y-5">
         {/* Mini KPIs */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {[
             { label: 'Total', value: intervenciones.length, color: 'text-primary' },
             { label: 'En ejecución', value: countByEstado('En ejecución'), color: 'text-blue-600' },
             { label: 'Pendientes', value: countByEstado('Solicitud') + countByEstado('En revisión'), color: 'text-yellow-600' },
             { label: 'Finalizadas', value: countByEstado('Finalizado'), color: 'text-green-600' },
+            {
+              label: vencidas > 0 ? `Por repetir (${vencidas} vencidas)` : 'Por repetir',
+              value: alertas.length,
+              color: vencidas > 0 ? 'text-red-600' : 'text-secondary',
+            },
           ].map(s => (
             <Card key={s.label} className="shadow-card">
               <CardContent className="p-4">
@@ -166,6 +253,15 @@ export default function IntervencionesPage() {
                   {PRIORIDADES.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <Select value={filterRepeticion} onValueChange={setFilterRepeticion}>
+                <SelectTrigger className="w-full md:w-44"><SelectValue placeholder="Repetición" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las repeticiones</SelectItem>
+                  <SelectItem value="alerta">Con alerta activa</SelectItem>
+                  <SelectItem value="vencida">Solo vencidas</SelectItem>
+                  <SelectItem value="recurrente">Solo recurrentes</SelectItem>
+                </SelectContent>
+              </Select>
               <Button onClick={openCreate} className="shrink-0">
                 <Plus className="h-4 w-4 mr-1.5" /> Nueva Intervención
               </Button>
@@ -188,6 +284,7 @@ export default function IntervencionesPage() {
                     <TableHead className="whitespace-nowrap">Estado</TableHead>
                     <TableHead className="whitespace-nowrap">Costo</TableHead>
                     <TableHead className="whitespace-nowrap">Fecha</TableHead>
+                    <TableHead className="whitespace-nowrap">Próxima repetición</TableHead>
                     <TableHead className="whitespace-nowrap text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -195,17 +292,19 @@ export default function IntervencionesPage() {
                   {loading ? (
                     Array(5).fill(0).map((_, i) => (
                       <TableRow key={i}>
-                        {Array(8).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}
+                        {Array(9).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}
                       </TableRow>
                     ))
                   ) : filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                         No hay intervenciones registradas
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map(item => (
+                    filtered.map(item => {
+                      const alerta = getAlertaRepeticion(item);
+                      return (
                       <TableRow key={item.id}>
                         <TableCell className="whitespace-nowrap font-mono text-xs">{item.codigo}</TableCell>
                         <TableCell className="whitespace-nowrap text-sm">{(item.espacio as EspacioFisico)?.nombre || '—'}</TableCell>
@@ -218,11 +317,36 @@ export default function IntervencionesPage() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap text-sm">{item.costo ? formatCurrency(item.costo) : '—'}</TableCell>
                         <TableCell className="whitespace-nowrap text-sm">{formatDate(item.fecha_solicitud)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {alerta ? (
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{formatDate(alerta.fecha)}</span>
+                              <Badge className={`${alerta.badgeClass} border-0 text-xs`} title={labelFrecuencia(alerta.frecuencia)}>
+                                {alerta.etiqueta}
+                              </Badge>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">Sin repetición</span>
+                          )}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap text-right">
+                          {alerta && alerta.nivel !== 'programada' && puedeGestionar && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1.5 text-primary"
+                              disabled={marcandoId === item.id}
+                              onClick={() => marcarRealizada(item)}
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              {marcandoId === item.id ? 'Registrando…' : 'Marcar realizada'}
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" onClick={() => openEdit(item)}>Editar</Button>
                         </TableCell>
                       </TableRow>
-                    ))
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -299,6 +423,53 @@ export default function IntervencionesPage() {
               <div className="md:col-span-2 space-y-2">
                 <Label>Observaciones</Label>
                 <Textarea value={form.observaciones} onChange={e => setForm(f => ({ ...f, observaciones: e.target.value }))} rows={2} />
+              </div>
+
+              {/* Repetición programada */}
+              <div className="md:col-span-2 space-y-3 rounded-lg border bg-muted/30 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Label className="flex items-center gap-1.5">
+                      <CalendarClock className="h-4 w-4" /> ¿Debe repetirse esta intervención?
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Programa la fecha en que debe volver a realizarse. El sistema avisará
+                      desde {DIAS_ANTICIPACION_ALERTA} días antes y mantendrá la alerta hasta
+                      que se registre como realizada.
+                    </p>
+                  </div>
+                  <Switch
+                    className="shrink-0 mt-1"
+                    checked={form.requiere_repeticion}
+                    onCheckedChange={toggleRepeticion}
+                  />
+                </div>
+                {form.requiere_repeticion && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Frecuencia</Label>
+                      <Select
+                        value={form.frecuencia_repeticion}
+                        onValueChange={v => cambiarFrecuencia(v as FrecuenciaIntervencion)}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {FRECUENCIAS_INTERVENCION.map(f => (
+                            <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Fecha de la próxima intervención *</Label>
+                      <Input
+                        type="date"
+                        value={form.fecha_proxima_intervencion}
+                        onChange={e => setForm(f => ({ ...f, fecha_proxima_intervencion: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-2">

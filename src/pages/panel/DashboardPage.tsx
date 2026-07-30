@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Package, Building2, AlertTriangle, Calendar, TrendingUp,
-  Users, CheckCircle, Clock, ArrowRight, Activity
+  Users, CheckCircle, Clock, ArrowRight, Activity, CalendarClock
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,11 @@ import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { useAuth } from '@/contexts/AuthContext';
-import { formatDate } from '@/lib/utils';
+import { fechaLimiteAlertas, formatDate, getAlertaRepeticion } from '@/lib/utils';
+import type { Intervencion } from '@/types/types';
+
+/** Intervención recurrente con el espacio al que pertenece (para las alertas). */
+type IntervencionProgramada = Intervencion & { espacio?: { id: string; nombre: string } | null };
 
 interface DashboardStats {
   totalActivos: number;
@@ -33,6 +37,7 @@ export default function DashboardPage() {
   });
   const [recentNovedades, setRecentNovedades] = useState<{ id: string; numero_radicado: string; tipo_novedad: string; estado: string; created_at: string }[]>([]);
   const [recentReservas, setRecentReservas] = useState<{ id: string; numero_solicitud: string; espacio_nombre: string; estado: string; fecha_inicio: string }[]>([]);
+  const [intervProgramadas, setIntervProgramadas] = useState<IntervencionProgramada[]>([]);
   const [loading, setLoading] = useState(true);
   const { profile } = useAuth();
   const navigate = useNavigate();
@@ -74,6 +79,17 @@ export default function DashboardPage() {
         ? supabase.from('intervenciones').select('*', { count: 'exact', head: true }).in('estado', ['Solicitud', 'En revisión', 'En ejecución']).in('espacio_id', misEspaciosIds)
         : supabase.from('intervenciones').select('*', { count: 'exact', head: true }).in('estado', ['Solicitud', 'En revisión', 'En ejecución']);
 
+      // Intervenciones que deben repetirse: vencidas o dentro de la ventana de
+      // anticipación. El responsable solo ve las de sus espacios asignados.
+      let alertasQuery = supabase
+        .from('intervenciones')
+        .select('*, espacio:espacios_fisicos(id,nombre)')
+        .eq('requiere_repeticion', true)
+        .lte('fecha_proxima_intervencion', fechaLimiteAlertas())
+        .order('fecha_proxima_intervencion')
+        .limit(10);
+      if (isResponsable) alertasQuery = alertasQuery.in('espacio_id', misEspaciosIds);
+
       const [
         { count: totalActivos },
         { count: activosBaja },
@@ -85,6 +101,7 @@ export default function DashboardPage() {
         { count: resAprobadas },
         { data: novRecientes },
         { data: resRecientes },
+        { data: intervAlertas },
       ] = await Promise.all([
         activosQuery,
         activosBajaQuery,
@@ -96,7 +113,12 @@ export default function DashboardPage() {
         supabase.from('reservas_alquileres').select('*', { count: 'exact', head: true }).in('estado', ['Aprobada', 'Confirmada']),
         supabase.from('novedades_incidentes').select('id, numero_radicado, tipo_novedad, estado, created_at').order('created_at', { ascending: false }).limit(5),
         supabase.from('reservas_alquileres').select('id, numero_solicitud, espacio_id, estado, fecha_inicio').order('created_at', { ascending: false }).limit(5),
+        alertasQuery,
       ]);
+
+      setIntervProgramadas(
+        Array.isArray(intervAlertas) ? (intervAlertas as unknown as IntervencionProgramada[]) : [],
+      );
 
       setStats({
         totalActivos: totalActivos || 0,
@@ -143,6 +165,9 @@ export default function DashboardPage() {
   );
 
   const isResponsable = profile?.role === 'responsable';
+  const intervVencidas = intervProgramadas.filter(
+    i => getAlertaRepeticion(i)?.nivel === 'vencida',
+  ).length;
   const kpis = [
     {
       title: isResponsable ? 'Mis Activos' : 'Activos Activos',
@@ -163,6 +188,15 @@ export default function DashboardPage() {
     {
       title: 'Reservas Pendientes', value: stats.reservasPendientes, sub: `${stats.reservasAprobadas} aprobadas`,
       icon: Calendar, color: 'text-secondary', bg: 'bg-secondary/10', action: () => navigate('/panel/reservas'),
+    },
+    {
+      title: 'Intervenciones por Repetir',
+      value: intervProgramadas.length,
+      sub: intervVencidas > 0 ? `${intervVencidas} ya vencidas` : 'Ninguna vencida',
+      icon: CalendarClock,
+      color: intervVencidas > 0 ? 'text-red-600' : 'text-primary',
+      bg: intervVencidas > 0 ? 'bg-red-100' : 'bg-primary/10',
+      action: () => navigate(isResponsable ? '/panel/espacios/mis-espacios' : '/panel/espacios/intervenciones'),
     },
   ];
 
@@ -192,7 +226,7 @@ export default function DashboardPage() {
         </div>
 
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {kpis.map(kpi => (
             <Card
               key={kpi.title}
@@ -213,6 +247,54 @@ export default function DashboardPage() {
             </Card>
           ))}
         </div>
+
+        {/* Alerta: intervenciones que deben repetirse */}
+        {!loading && intervProgramadas.length > 0 && (
+          <Card className={`shadow-card ${intervVencidas > 0 ? 'border-red-200' : 'border-yellow-200'}`}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="text-base text-balance flex items-center gap-2">
+                  <CalendarClock className={`h-4 w-4 ${intervVencidas > 0 ? 'text-red-600' : 'text-yellow-700'}`} />
+                  Intervenciones que deben repetirse
+                </CardTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate(isResponsable ? '/panel/espacios/mis-espacios' : '/panel/espacios/intervenciones')}
+                >
+                  Ver todo <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {intervProgramadas.map(i => {
+                  const alerta = getAlertaRepeticion(i);
+                  if (!alerta) return null;
+                  return (
+                    <div
+                      key={i.id}
+                      className="flex items-center justify-between gap-2 p-3 rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
+                      onClick={() => navigate(`/panel/espacios/${i.espacio_id}`)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">
+                          {i.tipo} — {i.espacio?.nombre ?? 'Espacio'}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {i.codigo} · Programada para {formatDate(alerta.fecha)}
+                        </p>
+                      </div>
+                      <Badge className={`${alerta.badgeClass} border-0 text-xs shrink-0`}>
+                        {alerta.etiqueta}
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Recent Novedades */}

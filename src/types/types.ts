@@ -9,6 +9,8 @@ export type BloqueEspacio = 'Bloque A' | 'Bloque B' | 'Bloque C' | 'Bloque D' | 
 export type EstadoIntervencion = 'Solicitud' | 'En revisión' | 'Aprobada' | 'En ejecución' | 'Finalizado' | 'Rechazada';
 export type TipoIntervencion = 'Mantenimiento preventivo' | 'Mantenimiento correctivo' | 'Remodelación' | 'Adecuación' | 'Construcción nueva' | 'Modificación eléctrica' | 'Modificación hidráulica' | 'Reparación de emergencia';
 export type Prioridad = 'Alta' | 'Media' | 'Baja';
+/** Cada cuánto debe repetirse una intervención: cada mes, cada seis meses o cada año. */
+export type FrecuenciaIntervencion = 'Mensual' | 'Semestral' | 'Anual';
 export type EstadoNovedad = 'Recibido' | 'En revisión' | 'En gestión' | 'Resuelto' | 'Cerrado';
 export type TipoNovedad = 'Daño en equipamiento' | 'Gotera/filtración de agua' | 'Daño eléctrico' | 'Daño en mobiliario' | 'Problema de seguridad' | 'Aseo e higiene' | 'Otro';
 export type RolReportante = 'Estudiante' | 'Docente' | 'Administrativo' | 'Visitante';
@@ -205,6 +207,11 @@ export interface Intervencion {
   novedad_id: string | null;
   solicitado_por: string | null;
   aprobado_por: string | null;
+  // Repetición programada (mantenimiento recurrente)
+  requiere_repeticion: boolean;
+  frecuencia_repeticion: FrecuenciaIntervencion | null;
+  fecha_proxima_intervencion: string | null;
+  fecha_ultima_repeticion: string | null;
   created_at: string;
   updated_at: string;
   // joined

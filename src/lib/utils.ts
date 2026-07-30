@@ -1,5 +1,7 @@
 import { type ClassValue, clsx } from 'clsx';
+import { addMonths, differenceInCalendarDays, format } from 'date-fns';
 import { twMerge } from 'tailwind-merge';
+import type { FrecuenciaIntervencion, Intervencion } from '@/types/types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -193,4 +195,126 @@ export function formatFranjaHoraria(horaInicio?: string | null, horaFin?: string
   const ini = horaInicio ? horaInicio.slice(0, 5) : '00:00';
   const fin = horaFin ? horaFin.slice(0, 5) : '23:59';
   return `${ini}–${fin}`;
+}
+
+// ─── Repetición de intervenciones (mantenimiento programado) ─────────────────
+
+/**
+ * Días de anticipación con los que el panel empieza a avisar que una
+ * intervención recurrente debe volver a realizarse.
+ */
+export const DIAS_ANTICIPACION_ALERTA = 30;
+
+/** Frecuencias con las que puede repetirse una intervención. */
+export const FRECUENCIAS_INTERVENCION: {
+  value: FrecuenciaIntervencion;
+  label: string;
+  meses: number;
+}[] = [
+  { value: 'Mensual', label: 'Cada mes', meses: 1 },
+  { value: 'Semestral', label: 'Cada seis meses', meses: 6 },
+  { value: 'Anual', label: 'Cada año', meses: 12 },
+];
+
+/** Etiqueta legible de una frecuencia ("Cada seis meses"). */
+export function labelFrecuencia(frecuencia: FrecuenciaIntervencion | null | undefined): string {
+  return FRECUENCIAS_INTERVENCION.find(f => f.value === frecuencia)?.label ?? '—';
+}
+
+/**
+ * Suma la frecuencia a una fecha y devuelve el resultado en formato ISO
+ * (yyyy-MM-dd), listo para guardar en una columna `date` de Postgres.
+ */
+export function sumarFrecuencia(fecha: string, frecuencia: FrecuenciaIntervencion): string {
+  const meses = FRECUENCIAS_INTERVENCION.find(f => f.value === frecuencia)?.meses ?? 0;
+  return format(addMonths(new Date(cleanDateString(fecha)), meses), 'yyyy-MM-dd');
+}
+
+/**
+ * Días de calendario que faltan para una fecha: 0 es hoy y los valores
+ * negativos indican que ya pasó (intervención vencida).
+ */
+export function diasHastaFecha(fecha: string): number {
+  return differenceInCalendarDays(new Date(cleanDateString(fecha)), new Date());
+}
+
+/** Nivel de urgencia de una repetición programada. */
+export type NivelAlertaRepeticion = 'vencida' | 'proxima' | 'programada';
+
+export interface AlertaRepeticion {
+  nivel: NivelAlertaRepeticion;
+  /** Días que faltan (negativo si ya venció). */
+  dias: number;
+  fecha: string;
+  frecuencia: FrecuenciaIntervencion | null;
+  /** Texto corto para mostrar en badges y listados. */
+  etiqueta: string;
+  badgeClass: string;
+}
+
+type IntervencionRecurrente = Pick<
+  Intervencion,
+  'requiere_repeticion' | 'frecuencia_repeticion' | 'fecha_proxima_intervencion'
+>;
+
+/**
+ * Calcula el estado de la alerta de una intervención recurrente. Devuelve
+ * `null` cuando la intervención no se repite (no hay nada que avisar).
+ *
+ * - `vencida`: la fecha ya pasó y nadie ha registrado que se hizo.
+ * - `proxima`: faltan DIAS_ANTICIPACION_ALERTA días o menos.
+ * - `programada`: todavía falta más tiempo.
+ */
+export function getAlertaRepeticion(
+  intervencion: IntervencionRecurrente | null | undefined,
+): AlertaRepeticion | null {
+  if (!intervencion?.requiere_repeticion || !intervencion.fecha_proxima_intervencion) return null;
+
+  const fecha = intervencion.fecha_proxima_intervencion;
+  const dias = diasHastaFecha(fecha);
+  const base = {
+    dias,
+    fecha,
+    frecuencia: intervencion.frecuencia_repeticion ?? null,
+  };
+
+  if (dias < 0) {
+    const atraso = Math.abs(dias);
+    return {
+      ...base,
+      nivel: 'vencida',
+      etiqueta: `Vencida hace ${atraso} día${atraso === 1 ? '' : 's'}`,
+      badgeClass: 'bg-red-100 text-red-800',
+    };
+  }
+  if (dias <= DIAS_ANTICIPACION_ALERTA) {
+    return {
+      ...base,
+      nivel: 'proxima',
+      etiqueta: dias === 0 ? 'Debe realizarse hoy' : `Faltan ${dias} día${dias === 1 ? '' : 's'}`,
+      badgeClass: 'bg-yellow-100 text-yellow-800',
+    };
+  }
+  return {
+    ...base,
+    nivel: 'programada',
+    etiqueta: `Programada en ${dias} días`,
+    badgeClass: 'bg-blue-100 text-blue-800',
+  };
+}
+
+/** ¿La repetición requiere atención ya (vencida o dentro de la anticipación)? */
+export function repeticionRequiereAtencion(intervencion: IntervencionRecurrente): boolean {
+  const alerta = getAlertaRepeticion(intervencion);
+  return alerta !== null && alerta.nivel !== 'programada';
+}
+
+/**
+ * Fecha límite (ISO) hasta la que se consideran alertas activas. Se usa para
+ * filtrar en Supabase: `.lte('fecha_proxima_intervencion', fechaLimiteAlertas())`.
+ */
+export function fechaLimiteAlertas(dias: number = DIAS_ANTICIPACION_ALERTA): string {
+  const limite = new Date();
+  limite.setDate(limite.getDate() + dias);
+  return format(limite, 'yyyy-MM-dd');
 }
