@@ -40,6 +40,7 @@ import {
 } from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
 import { activosDeResponsable, generarActaInventarioPDF } from '@/lib/acta-inventario';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
 import { toast } from 'sonner';
 
@@ -212,7 +213,10 @@ export default function EspacioDetallePage() {
       { data: repData },
     ] = await Promise.all([
       supabase.from('espacios_fisicos').select('*').eq('id', id).maybeSingle(),
-      supabase.from('activos_fijos').select('*').eq('espacio_id', id).eq('dado_de_baja', false).order('nombre'),
+      // Paginado: un espacio grande (bodega) puede superar las 1.000 filas por respuesta.
+      fetchAllRows<ActivoFijo>(() =>
+        supabase.from('activos_fijos').select('*').eq('espacio_id', id).eq('dado_de_baja', false).order('nombre').order('id')
+      ),
       supabase.from('intervenciones').select('*').eq('espacio_id', id).order('created_at', { ascending: false }).limit(20),
       supabase.from('asignaciones_espacios').select('*').eq('espacio_id', id).eq('activo', true),
       supabase.from('profiles').select('*').order('nombre'),

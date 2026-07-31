@@ -24,6 +24,7 @@ import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 import { exportToPDF } from '@/lib/export';
 import { generarActaInventarioPDF } from '@/lib/acta-inventario';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 import type { Profile, EspacioFisico, AsignacionEspacio, ActivoFijo } from '@/types/types';
 
 const HOY = new Date().toISOString().split('T')[0];
@@ -153,19 +154,23 @@ export default function ResponsablesPage() {
     setActaLoadingId(perfil.id);
     try {
       // Activos vigentes (no dados de baja) de los espacios asignados.
-      const { data, error } = await supabase
-        .from('activos_fijos')
-        .select('id,codigo,nombre,categoria,estado,espacio_id,dado_de_baja')
-        .in('espacio_id', espacioIds)
-        .eq('dado_de_baja', false)
-        .order('codigo');
+      // Paginado: el acta debe listar todos los activos, no las primeras 1.000 filas.
+      const { data, error } = await fetchAllRows(() =>
+        supabase
+          .from('activos_fijos')
+          .select('id,codigo,nombre,categoria,estado,espacio_id,dado_de_baja')
+          .in('espacio_id', espacioIds)
+          .eq('dado_de_baja', false)
+          .order('codigo')
+          .order('id')
+      );
       if (error) throw error;
 
       const espaciosAsignados = espacios.filter(e => espacioIds.includes(e.id));
       await generarActaInventarioPDF({
         responsable: perfil,
         espacios: espaciosAsignados,
-        activos: (Array.isArray(data) ? data : []) as ActivoFijo[],
+        activos: data as unknown as ActivoFijo[],
       });
       toast.success('Acta de inventario generada');
     } catch (err) {

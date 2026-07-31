@@ -7,7 +7,7 @@
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
 import type { ActivoFijo, EspacioFisico, Profile } from '@/types/types';
-import { LOGO_URL } from '@/lib/assets';
+import { cargarLogo, slug } from '@/lib/acta-comun';
 
 /** Nota legal del reglamento interno (texto solicitado, literal). */
 const NOTA_LEGAL =
@@ -17,44 +17,6 @@ const NOTA_LEGAL =
   'causados por negligencia o indebida utilización por parte del colaborador, se le ' +
   'cargaran a este los costos de reparación o reposición del mismo. Todo activo que esté ' +
   'a su cargo no podrá ser trasladado sin previa aprobación.';
-
-/** Nombre de archivo seguro a partir del nombre del responsable. */
-function slug(nombre: string | null): string {
-  return (nombre || 'responsable')
-    .normalize('NFD')
-    // Elimina marcas diacríticas combinantes (U+0300–U+036F).
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-zA-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .toLowerCase() || 'responsable';
-}
-
-/**
- * Rasteriza el logo SVG a PNG (jsPDF no incrusta SVG). Devuelve el dataURL y la
- * relación de aspecto (ancho/alto). Si falla (o no hay DOM), devuelve null y el
- * encabezado se dibuja solo con texto.
- */
-async function cargarLogo(): Promise<{ dataUrl: string; ratio: number } | null> {
-  try {
-    if (typeof document === 'undefined') return null;
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = LOGO_URL;
-    await img.decode();
-    const w = img.naturalWidth || 600;
-    const h = img.naturalHeight || 230;
-    const scale = 3; // nitidez para impresión
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(w * scale);
-    canvas.height = Math.round(h * scale);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    return { dataUrl: canvas.toDataURL('image/png'), ratio: w / h };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Activos fijos que están a nombre de un responsable. Un activo tiene un único
@@ -298,7 +260,7 @@ export async function generarActaInventarioPDF({
   doc.setTextColor(0, 0, 0);
 
   const nombreArchivo = porEspacio
-    ? `acta_inventario_${slug(espacios[0].codigo)}_${slug(responsable.nombre)}.pdf`
-    : `acta_inventario_${slug(responsable.nombre)}.pdf`;
+    ? `acta_inventario_${slug(espacios[0].codigo, 'espacio')}_${slug(responsable.nombre, 'responsable')}.pdf`
+    : `acta_inventario_${slug(responsable.nombre, 'responsable')}.pdf`;
   doc.save(nombreArchivo);
 }

@@ -31,6 +31,7 @@ import type {
 import { getEstadoColor, formatDate, formatCurrency } from '@/lib/utils';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
 import { activosDeResponsable, generarActaInventarioPDF } from '@/lib/acta-inventario';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 import { PhotoCarousel } from '@/components/common/PhotoCarousel';
 import { toast } from 'sonner';
 
@@ -285,7 +286,10 @@ export default function MisEspaciosPage() {
       { data: fotosData },
     ] = await Promise.all([
       supabase.from('espacios_fisicos').select('*').in('id', espacioIds).order('codigo'),
-      supabase.from('activos_fijos').select('*').in('espacio_id', espacioIds).eq('dado_de_baja', false),
+      // Paginado: un responsable con muchos espacios puede superar las 1.000 filas por respuesta.
+      fetchAllRows<ActivoFijo>(() =>
+        supabase.from('activos_fijos').select('*').in('espacio_id', espacioIds).eq('dado_de_baja', false).order('id')
+      ),
       supabase.from('intervenciones').select('*').in('espacio_id', espacioIds).order('created_at', { ascending: false }),
       supabase.from('asignaciones_espacios').select('*').in('espacio_id', espacioIds).eq('activo', true),
       supabase.from('profiles').select('*').order('nombre'),

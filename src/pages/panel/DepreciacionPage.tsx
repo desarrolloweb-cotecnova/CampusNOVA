@@ -8,6 +8,7 @@ import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import type { ActivoFijo } from '@/types/types';
 import { formatCurrency, formatDate, calcularDepreciacion } from '@/lib/utils';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 
 export default function DepreciacionPage() {
   const [activos, setActivos] = useState<ActivoFijo[]>([]);
@@ -19,12 +20,17 @@ export default function DepreciacionPage() {
 
   const loadActivos = async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from('activos_fijos')
-      .select('*')
-      .eq('depreciable', true)
-      .eq('dado_de_baja', false)
-      .order('fecha_adquisicion', { ascending: true });
+    // Paginado: sin `.range()` PostgREST devolvería solo las primeras 1.000 filas
+    // y los totales de depreciación quedarían subestimados.
+    const { data } = await fetchAllRows<ActivoFijo>(() =>
+      supabase
+        .from('activos_fijos')
+        .select('*')
+        .eq('depreciable', true)
+        .eq('dado_de_baja', false)
+        .order('fecha_adquisicion', { ascending: true })
+        .order('id')
+    );
     setActivos(Array.isArray(data) ? data : []);
     setLoading(false);
   };

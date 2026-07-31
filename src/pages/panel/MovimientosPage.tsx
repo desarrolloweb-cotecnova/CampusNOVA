@@ -1,41 +1,83 @@
-import { useEffect, useState, useCallback } from 'react';
-import { ArrowLeftRight, Search, Plus, Printer } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { ArrowLeftRight, Search, Plus, FileText, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
-import { formatDateTime } from '@/lib/utils';
+import { useAuth } from '@/contexts/AuthContext';
+import { formatDate } from '@/lib/utils';
+import { fetchAllRows } from '@/lib/supabase-fetch';
+import { generarActaMovimientoPDF, type ActivoActa } from '@/lib/acta-movimiento';
 import { toast } from 'sonner';
 
 const TIPOS_MOVIMIENTO = ['Traslado', 'Préstamo', 'Cambio de responsable', 'Mantenimiento', 'Retiro temporal', 'Otro'];
 
-interface MovimientoRow {
+/** Roles habilitados para aprobar un movimiento de activos. */
+const ROLES_APRUEBAN = ['infraestructura', 'admin'];
+
+/** Filas del selector que se pintan a la vez; el resto se acota con la búsqueda. */
+const MAX_ACTIVOS_VISIBLES = 100;
+
+/** Etiquetas de activos seleccionados que se listan antes de resumir el resto. */
+const MAX_CHIPS_SELECCION = 30;
+
+/** Tamaño de bloque para insertar y actualizar en lotes grandes. */
+const BLOQUE_ESCRITURA = 500;
+
+const SIN_ESPACIO = 'none';
+
+interface ActivoOpcion {
   id: string;
+  codigo: string;
+  nombre: string;
+  categoria: string | null;
+  estado: string | null;
+  espacio_id: string | null;
+  responsable: string | null;
+}
+
+interface EspacioOpcion {
+  id: string;
+  codigo: string | null;
+  nombre: string;
+}
+
+interface PerfilOpcion {
+  id: string;
+  nombre: string | null;
+  cargo: string | null;
+  role: string;
+}
+
+/**
+ * Movimiento tal como se muestra en el historial: un lote agrupa todos los
+ * activos que se movieron juntos compartiendo los mismos datos.
+ */
+interface LoteMovimiento {
+  lote_id: string;
   tipo_movimiento: string;
-  activo_id: string;
-  activo_nombre: string;
-  activo_codigo: string;
+  fecha_movimiento: string;
+  created_at: string;
   espacio_origen: string;
   espacio_destino: string;
   responsable_anterior: string | null;
   responsable_nuevo: string | null;
-  estado_anterior: string | null;
-  estado_nuevo: string | null;
+  aprobado_por: string | null;
   motivo: string | null;
   observaciones: string | null;
-  aprobado_por: string | null;
-  fecha_movimiento: string;
+  activos: ActivoActa[];
 }
 
 interface MovimientoForm {
-  activo_id: string;
+  activo_ids: string[];
   tipo_movimiento: string;
   espacio_origen_id: string;
   espacio_destino_id: string;
@@ -48,166 +90,363 @@ interface MovimientoForm {
 }
 
 const EMPTY_FORM: MovimientoForm = {
-  activo_id: '', tipo_movimiento: 'Traslado',
-  espacio_origen_id: 'none', espacio_destino_id: 'none',
+  activo_ids: [], tipo_movimiento: 'Traslado',
+  espacio_origen_id: SIN_ESPACIO, espacio_destino_id: SIN_ESPACIO,
   responsable_anterior: '', responsable_nuevo: '', aprobado_por: '',
   fecha_movimiento: new Date().toISOString().slice(0, 10),
   motivo: '', observaciones: '',
 };
 
+/** Divide una lista en bloques para no enviar una petición desmedida. */
+function enBloques<T>(items: T[], tam: number): T[][] {
+  const bloques: T[][] = [];
+  for (let i = 0; i < items.length; i += tam) bloques.push(items.slice(i, i + tam));
+  return bloques;
+}
+
+/** Etiqueta de un espacio: "CÓDIGO — Nombre". */
+function etiquetaEspacio(e: { codigo?: string | null; nombre?: string | null } | null | undefined): string {
+  if (!e) return '—';
+  return [e.codigo, e.nombre].filter(Boolean).join(' — ') || '—';
+}
+
+/**
+ * Persona que entrega o recibe. Se toma de los responsables asignados al
+ * espacio; si el espacio no tiene ninguno (o no se eligió espacio), se deja
+ * escribir el nombre a mano para no bloquear el registro.
+ *
+ * Va fuera del componente de página a propósito: definirlo dentro lo
+ * recrearía en cada render y el campo de texto perdería el foco al escribir.
+ */
+function CampoPersona({ etiqueta, espacioId, responsables, valor, onChange }: {
+  etiqueta: string;
+  espacioId: string;
+  responsables: string[];
+  valor: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>{etiqueta}</Label>
+      {responsables.length > 0 ? (
+        <Select value={valor || undefined} onValueChange={onChange}>
+          <SelectTrigger><SelectValue placeholder="Seleccionar responsable" /></SelectTrigger>
+          <SelectContent>
+            {responsables.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          value={valor}
+          onChange={e => onChange(e.target.value)}
+          placeholder={espacioId === SIN_ESPACIO ? 'Selecciona un espacio' : 'El espacio no tiene responsable asignado'}
+        />
+      )}
+    </div>
+  );
+}
+
 export default function MovimientosPage() {
-  const [movimientos, setMovimientos] = useState<MovimientoRow[]>([]);
-  const [activos, setActivos] = useState<{ id: string; codigo: string; nombre: string }[]>([]);
-  const [espacios, setEspacios] = useState<{ id: string; nombre: string }[]>([]);
+  const { profile } = useAuth();
+  const [lotes, setLotes] = useState<LoteMovimiento[]>([]);
+  const [activos, setActivos] = useState<ActivoOpcion[]>([]);
+  const [espacios, setEspacios] = useState<EspacioOpcion[]>([]);
+  const [perfiles, setPerfiles] = useState<PerfilOpcion[]>([]);
+  const [asignaciones, setAsignaciones] = useState<{ espacio_id: string; responsable_id: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<MovimientoForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [printMovimiento, setPrintMovimiento] = useState<MovimientoRow | null>(null);
+  const [busquedaActivo, setBusquedaActivo] = useState('');
+  const [soloDelOrigen, setSoloDelOrigen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [{ data: movData }, { data: actData }, { data: espData }] = await Promise.all([
-      supabase
-        .from('movimientos_activos')
-        .select(`
-          id, tipo_movimiento, motivo, observaciones, aprobado_por, fecha_movimiento,
-          activo_id,
-          responsable_anterior, responsable_nuevo, estado_anterior, estado_nuevo,
-          activo:activos_fijos(codigo, nombre),
-          espacio_origen:espacios_fisicos!movimientos_activos_espacio_origen_id_fkey(nombre),
-          espacio_destino:espacios_fisicos!movimientos_activos_espacio_destino_id_fkey(nombre)
-        `)
-        .order('fecha_movimiento', { ascending: false })
-        .limit(200),
-      supabase.from('activos_fijos').select('id, codigo, nombre').eq('dado_de_baja', false).order('nombre'),
-      supabase.from('espacios_fisicos').select('id, nombre').order('nombre'),
+    const [{ data: movData }, { data: actData }, { data: espData }, { data: perfData }, { data: asigData }] = await Promise.all([
+      // Paginado: un traslado masivo genera una fila por activo, así que el
+      // historial crece mucho más rápido que el tope por respuesta.
+      fetchAllRows(() =>
+        supabase
+          .from('movimientos_activos')
+          .select(`
+            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por,
+            fecha_movimiento, created_at,
+            responsable_anterior, responsable_nuevo,
+            activo:activos_fijos(codigo, nombre, categoria, estado),
+            espacio_origen:espacios_fisicos!movimientos_activos_espacio_origen_id_fkey(codigo, nombre),
+            espacio_destino:espacios_fisicos!movimientos_activos_espacio_destino_id_fkey(codigo, nombre)
+          `)
+          .order('created_at', { ascending: false })
+          .order('id')
+      ),
+      fetchAllRows(() =>
+        supabase.from('activos_fijos')
+          .select('id, codigo, nombre, categoria, estado, espacio_id, responsable')
+          .eq('dado_de_baja', false)
+          .order('codigo')
+          .order('id')
+      ),
+      supabase.from('espacios_fisicos').select('id, codigo, nombre').order('codigo'),
+      supabase.from('profiles').select('id, nombre, cargo, role').eq('activo', true).order('nombre'),
+      supabase.from('asignaciones_espacios').select('espacio_id, responsable_id').eq('activo', true),
     ]);
 
-    const rows: MovimientoRow[] = (Array.isArray(movData) ? movData : []).map(d => ({
-      id: d.id,
-      tipo_movimiento: d.tipo_movimiento,
-      activo_id: d.activo_id,
-      activo_nombre: (d.activo as unknown as { nombre: string })?.nombre || '—',
-      activo_codigo: (d.activo as unknown as { codigo: string })?.codigo || '—',
-      espacio_origen: (d.espacio_origen as unknown as { nombre: string })?.nombre || '—',
-      espacio_destino: (d.espacio_destino as unknown as { nombre: string })?.nombre || '—',
-      responsable_anterior: d.responsable_anterior,
-      responsable_nuevo: d.responsable_nuevo,
-      estado_anterior: d.estado_anterior,
-      estado_nuevo: d.estado_nuevo,
-      motivo: d.motivo,
-      observaciones: d.observaciones,
-      aprobado_por: d.aprobado_por,
-      fecha_movimiento: d.fecha_movimiento,
-    }));
-    setMovimientos(rows);
-    setActivos(Array.isArray(actData) ? actData : []);
-    setEspacios(Array.isArray(espData) ? espData as { id: string; nombre: string }[] : []);
+    // Agrupa las filas por lote conservando el orden (ya vienen por fecha desc).
+    const porLote = new Map<string, LoteMovimiento>();
+    for (const d of Array.isArray(movData) ? movData : []) {
+      const fila = d as Record<string, unknown>;
+      const loteId = (fila.lote_id as string) ?? (fila.id as string);
+      let lote = porLote.get(loteId);
+      if (!lote) {
+        lote = {
+          lote_id: loteId,
+          tipo_movimiento: fila.tipo_movimiento as string,
+          fecha_movimiento: fila.fecha_movimiento as string,
+          created_at: fila.created_at as string,
+          espacio_origen: etiquetaEspacio(fila.espacio_origen as EspacioOpcion | null),
+          espacio_destino: etiquetaEspacio(fila.espacio_destino as EspacioOpcion | null),
+          responsable_anterior: (fila.responsable_anterior as string) || null,
+          responsable_nuevo: (fila.responsable_nuevo as string) || null,
+          aprobado_por: (fila.aprobado_por as string) || null,
+          motivo: (fila.motivo as string) || null,
+          observaciones: (fila.observaciones as string) || null,
+          activos: [],
+        };
+        porLote.set(loteId, lote);
+      }
+      const activo = fila.activo as ActivoActa | null;
+      if (activo) lote.activos.push(activo);
+    }
+
+    setLotes([...porLote.values()]);
+    setActivos(Array.isArray(actData) ? (actData as unknown as ActivoOpcion[]) : []);
+    setEspacios(Array.isArray(espData) ? (espData as EspacioOpcion[]) : []);
+    setPerfiles(Array.isArray(perfData) ? (perfData as PerfilOpcion[]) : []);
+    setAsignaciones(Array.isArray(asigData) ? (asigData as { espacio_id: string; responsable_id: string }[]) : []);
     setLoading(false);
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const filtered = movimientos.filter(m => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    return [m.activo_nombre, m.activo_codigo, m.tipo_movimiento, m.motivo].some(f => f?.toLowerCase().includes(s));
-  });
+  /** Nombres de los responsables asignados a cada espacio. */
+  const responsablesPorEspacio = useMemo(() => {
+    const porId = new Map(perfiles.map(p => [p.id, p]));
+    const mapa = new Map<string, string[]>();
+    for (const a of asignaciones) {
+      const nombre = porId.get(a.responsable_id)?.nombre?.trim();
+      if (!nombre) continue;
+      const actuales = mapa.get(a.espacio_id) ?? [];
+      if (!actuales.includes(nombre)) actuales.push(nombre);
+      mapa.set(a.espacio_id, actuales);
+    }
+    return mapa;
+  }, [asignaciones, perfiles]);
+
+  /** Usuarios habilitados para aprobar el movimiento. */
+  const aprobadores = useMemo(
+    () => perfiles.filter(p => ROLES_APRUEBAN.includes(p.role) && p.nombre?.trim()),
+    [perfiles],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return lotes;
+    return lotes.filter(l =>
+      [l.tipo_movimiento, l.motivo, l.espacio_origen, l.espacio_destino, l.responsable_anterior, l.responsable_nuevo]
+        .some(f => f?.toLowerCase().includes(q)) ||
+      l.activos.some(a => a.codigo?.toLowerCase().includes(q) || a.nombre?.toLowerCase().includes(q))
+    );
+  }, [lotes, search]);
+
+  // ─── Selector de activos ─────────────────────────────────────────────────
+  const activosFiltrados = useMemo(() => {
+    const q = busquedaActivo.trim().toLowerCase();
+    const filtrarPorOrigen = soloDelOrigen && form.espacio_origen_id !== SIN_ESPACIO;
+    return activos.filter(a => {
+      if (filtrarPorOrigen && a.espacio_id !== form.espacio_origen_id) return false;
+      if (!q) return true;
+      return a.codigo?.toLowerCase().includes(q) || a.nombre?.toLowerCase().includes(q);
+    });
+  }, [activos, busquedaActivo, soloDelOrigen, form.espacio_origen_id]);
+
+  const seleccionados = useMemo(() => new Set(form.activo_ids), [form.activo_ids]);
+  const activosPorId = useMemo(() => new Map(activos.map(a => [a.id, a])), [activos]);
+
+  const toggleActivo = (id: string) => {
+    setForm(f => ({
+      ...f,
+      activo_ids: f.activo_ids.includes(id) ? f.activo_ids.filter(x => x !== id) : [...f.activo_ids, id],
+    }));
+  };
+
+  const seleccionarFiltrados = () => {
+    setForm(f => ({ ...f, activo_ids: [...new Set([...f.activo_ids, ...activosFiltrados.map(a => a.id)])] }));
+  };
+
+  /**
+   * Al elegir un espacio, la persona que entrega/recibe se toma de sus
+   * responsables asignados: si hay uno solo queda preseleccionado, si hay
+   * varios el usuario escoge. Cambiar el origen reactiva el filtro del
+   * selector, que es lo habitual en un traslado masivo.
+   */
+  const cambiarEspacio = (campo: 'origen' | 'destino', valor: string) => {
+    const nombres = responsablesPorEspacio.get(valor) ?? [];
+    const unico = nombres.length === 1 ? nombres[0] : '';
+    setForm(f => campo === 'origen'
+      ? { ...f, espacio_origen_id: valor, responsable_anterior: unico }
+      : { ...f, espacio_destino_id: valor, responsable_nuevo: unico });
+    if (campo === 'origen') setSoloDelOrigen(valor !== SIN_ESPACIO);
+  };
+
+  const abrirDialogo = () => {
+    // Si quien registra puede aprobar, queda preseleccionado; si solo hay un
+    // aprobador posible, se toma ese.
+    const yo = aprobadores.find(p => p.id === profile?.id);
+    const porDefecto = yo ?? (aprobadores.length === 1 ? aprobadores[0] : null);
+    setForm({ ...EMPTY_FORM, aprobado_por: porDefecto?.nombre ?? '' });
+    setBusquedaActivo('');
+    setSoloDelOrigen(false);
+    setDialogOpen(true);
+  };
+
+  const toggleExpandido = (loteId: string) => {
+    setExpandidos(prev => {
+      const next = new Set(prev);
+      next.has(loteId) ? next.delete(loteId) : next.add(loteId);
+      return next;
+    });
+  };
+
+  const handleActa = async (lote: LoteMovimiento) => {
+    try {
+      await generarActaMovimientoPDF({
+        loteId: lote.lote_id,
+        tipoMovimiento: lote.tipo_movimiento,
+        fechaMovimiento: lote.fecha_movimiento,
+        espacioOrigen: lote.espacio_origen,
+        espacioDestino: lote.espacio_destino,
+        personaEntrega: lote.responsable_anterior || '',
+        personaRecibe: lote.responsable_nuevo || '',
+        personaAprueba: lote.aprobado_por || '',
+        motivo: lote.motivo || '',
+        observaciones: lote.observaciones || '',
+        activos: lote.activos,
+      });
+    } catch (err) {
+      toast.error('Error al generar el acta: ' + (err as Error).message);
+    }
+  };
 
   const handleSave = async () => {
-    if (!form.activo_id) { toast.error('Selecciona un activo'); return; }
+    if (form.activo_ids.length === 0) { toast.error('Selecciona al menos un activo'); return; }
     if (!form.motivo.trim()) { toast.error('El motivo es obligatorio'); return; }
+    if (form.tipo_movimiento === 'Traslado' && form.espacio_destino_id === SIN_ESPACIO) {
+      toast.error('Un traslado necesita un espacio de destino');
+      return;
+    }
+
     setSaving(true);
-    const payload = {
-      activo_id: form.activo_id,
+    const loteId = crypto.randomUUID();
+    const base = {
+      lote_id: loteId,
       tipo_movimiento: form.tipo_movimiento,
-      espacio_origen_id: form.espacio_origen_id === 'none' ? null : form.espacio_origen_id,
-      espacio_destino_id: form.espacio_destino_id === 'none' ? null : form.espacio_destino_id,
+      espacio_origen_id: form.espacio_origen_id === SIN_ESPACIO ? null : form.espacio_origen_id,
+      espacio_destino_id: form.espacio_destino_id === SIN_ESPACIO ? null : form.espacio_destino_id,
       responsable_anterior: form.responsable_anterior || null,
       responsable_nuevo: form.responsable_nuevo || null,
       aprobado_por: form.aprobado_por || null,
       fecha_movimiento: form.fecha_movimiento,
       motivo: form.motivo,
       observaciones: form.observaciones || null,
+      registrado_por: profile?.id ?? null,
     };
-    const { error } = await supabase.from('movimientos_activos').insert(payload);
-    setSaving(false);
-    if (error) { toast.error('Error al registrar movimiento: ' + error.message); return; }
-    toast.success('Movimiento registrado exitosamente');
-    setDialogOpen(false);
-    loadData();
-  };
 
-  const handlePrint = (m: MovimientoRow) => {
-    setPrintMovimiento(m);
-    setTimeout(() => window.print(), 300);
+    // Un registro por activo: conserva la trazabilidad individual y `lote_id`
+    // los mantiene unidos como un solo movimiento.
+    for (const bloque of enBloques(form.activo_ids, BLOQUE_ESCRITURA)) {
+      const { error } = await supabase
+        .from('movimientos_activos')
+        .insert(bloque.map(activo_id => ({ ...base, activo_id })));
+      if (error) {
+        setSaving(false);
+        toast.error('Error al registrar el movimiento: ' + error.message);
+        return;
+      }
+    }
+
+    // Un traslado reubica los activos en el inventario; un cambio de
+    // responsable solo actualiza a nombre de quién están. Los demás tipos
+    // (préstamo, mantenimiento, retiro temporal) son transitorios y no
+    // modifican la ficha del activo.
+    const cambios: { espacio_id?: string; responsable?: string } = {};
+    if (form.tipo_movimiento === 'Traslado' && base.espacio_destino_id) {
+      cambios.espacio_id = base.espacio_destino_id;
+    }
+    if (['Traslado', 'Cambio de responsable'].includes(form.tipo_movimiento) && form.responsable_nuevo) {
+      cambios.responsable = form.responsable_nuevo;
+    }
+    if (Object.keys(cambios).length > 0) {
+      for (const bloque of enBloques(form.activo_ids, BLOQUE_ESCRITURA)) {
+        const { error } = await supabase.from('activos_fijos').update(cambios).in('id', bloque);
+        if (error) {
+          setSaving(false);
+          toast.error('El movimiento quedó registrado, pero no se pudo actualizar el inventario: ' + error.message);
+          return;
+        }
+      }
+    }
+
+    const activosActa: ActivoActa[] = form.activo_ids
+      .map(id => activosPorId.get(id))
+      .filter((a): a is ActivoOpcion => Boolean(a))
+      .map(a => ({ codigo: a.codigo, nombre: a.nombre, categoria: a.categoria, estado: a.estado }));
+
+    setSaving(false);
+    setDialogOpen(false);
+    toast.success(
+      `Movimiento registrado: ${form.activo_ids.length} activo${form.activo_ids.length !== 1 ? 's' : ''}`,
+    );
+
+    // El acta es la constancia del movimiento: se emite de una vez y queda
+    // disponible en el historial para volver a descargarla.
+    await generarActaMovimientoPDF({
+      loteId,
+      tipoMovimiento: form.tipo_movimiento,
+      fechaMovimiento: form.fecha_movimiento,
+      espacioOrigen: etiquetaEspacio(espacios.find(e => e.id === base.espacio_origen_id)),
+      espacioDestino: etiquetaEspacio(espacios.find(e => e.id === base.espacio_destino_id)),
+      personaEntrega: form.responsable_anterior,
+      personaRecibe: form.responsable_nuevo,
+      personaAprueba: form.aprobado_por,
+      motivo: form.motivo,
+      observaciones: form.observaciones,
+      activos: activosActa,
+    });
+
+    loadData();
   };
 
   return (
     <AppLayout>
-      {/* Print-only acta */}
-      {printMovimiento && (
-        <div className="hidden print:block p-8 font-sans text-sm text-black">
-          <div className="text-center mb-6">
-            <p className="text-lg font-bold uppercase">CORPORACIÓN DE ESTUDIOS TECNOLÓGICOS DEL NORTE DEL VALLE</p>
-            <p className="text-base font-semibold uppercase mt-1">ACTA DE MOVIMIENTO DE ACTIVO FIJO</p>
-            <p className="text-xs mt-1">Fecha de movimiento: {printMovimiento.fecha_movimiento}</p>
-          </div>
-          <table className="w-full border-collapse border border-gray-400 mb-4 text-xs">
-            <tbody>
-              {[
-                ['Activo', `${printMovimiento.activo_nombre} (${printMovimiento.activo_codigo})`],
-                ['Tipo de movimiento', printMovimiento.tipo_movimiento],
-                ['Espacio de origen', printMovimiento.espacio_origen],
-                ['Espacio de destino', printMovimiento.espacio_destino],
-                ['Motivo', printMovimiento.motivo || '—'],
-                ['Observaciones', printMovimiento.observaciones || '—'],
-              ].map(([label, value]) => (
-                <tr key={label}>
-                  <td className="border border-gray-400 px-3 py-2 font-semibold bg-gray-100 w-40">{label}</td>
-                  <td className="border border-gray-400 px-3 py-2">{value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="font-semibold mb-4">Firmas de responsables:</p>
-          <div className="grid grid-cols-3 gap-6 mt-6">
-            {[
-              ['Persona que entrega', printMovimiento.responsable_anterior],
-              ['Persona que recibe', printMovimiento.responsable_nuevo],
-              ['Persona que aprueba', printMovimiento.aprobado_por],
-            ].map(([label, nombre]) => (
-              <div key={label} className="text-center">
-                <div className="border-b border-black mt-12 mb-1" />
-                <p className="font-semibold text-xs">{nombre || '____________________'}</p>
-                <p className="text-xs text-gray-600">{label}</p>
-                <p className="text-xs text-gray-500 mt-1">C.C.: ____________________</p>
-              </div>
-            ))}
-          </div>
-          <p className="text-center text-xs text-gray-400 mt-8">Generado por CampusNOVA — COTECNOVA</p>
-        </div>
-      )}
-
-      <div className="space-y-5 print:hidden">
+      <div className="space-y-5">
         {/* Toolbar */}
         <Card className="shadow-card">
           <CardContent className="p-4">
             <div className="flex flex-col md:flex-row gap-3">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Buscar movimientos..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+                <Input placeholder="Buscar por activo, código, espacio o motivo..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
               </div>
-              <Button onClick={() => { setForm(EMPTY_FORM); setDialogOpen(true); }}>
+              <Button onClick={abrirDialogo}>
                 <Plus className="h-4 w-4 mr-1.5" /> Registrar Movimiento
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* Table */}
+        {/* Historial agrupado por lote */}
         <Card className="shadow-card min-w-0">
           <CardHeader>
             <CardTitle className="text-base">Historial de Movimientos ({filtered.length})</CardTitle>
@@ -217,13 +456,13 @@ export default function MovimientosPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8" />
                     <TableHead className="whitespace-nowrap">Fecha</TableHead>
                     <TableHead className="whitespace-nowrap">Tipo</TableHead>
-                    <TableHead className="whitespace-nowrap">Activo</TableHead>
+                    <TableHead className="whitespace-nowrap">Activos</TableHead>
                     <TableHead className="whitespace-nowrap">Origen → Destino</TableHead>
                     <TableHead className="whitespace-nowrap">Entrega / Recibe</TableHead>
                     <TableHead className="whitespace-nowrap">Aprueba</TableHead>
-                    <TableHead className="whitespace-nowrap">Motivo</TableHead>
                     <TableHead className="whitespace-nowrap text-right">Acta</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -240,34 +479,61 @@ export default function MovimientosPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filtered.map(m => (
-                      <TableRow key={m.id}>
-                        <TableCell className="whitespace-nowrap text-xs">{formatDateTime(m.fecha_movimiento)}</TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          <Badge className="bg-primary/10 text-primary border-0 text-xs">{m.tipo_movimiento}</Badge>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap">
-                          <p className="text-sm font-medium">{m.activo_nombre}</p>
-                          <p className="text-xs text-muted-foreground font-mono">{m.activo_codigo}</p>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">
-                          <span className="text-muted-foreground">{m.espacio_origen}</span>
-                          <span className="mx-1">→</span>
-                          {m.espacio_destino}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-xs">
-                          <p>{m.responsable_anterior || '—'}</p>
-                          <p className="text-muted-foreground">{m.responsable_nuevo || '—'}</p>
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{m.aprobado_por || '—'}</TableCell>
-                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground max-w-[180px] truncate">{m.motivo || '—'}</TableCell>
-                        <TableCell className="whitespace-nowrap text-right">
-                          <Button variant="ghost" size="sm" onClick={() => handlePrint(m)}>
-                            <Printer className="h-3.5 w-3.5 mr-1" /> Acta
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                    filtered.map(l => {
+                      const abierto = expandidos.has(l.lote_id);
+                      return [
+                        <TableRow key={l.lote_id}>
+                          <TableCell className="p-0 pl-2">
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => toggleExpandido(l.lote_id)}
+                              aria-label={abierto ? 'Ocultar activos' : 'Ver activos'}>
+                              {abierto ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                            </Button>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{formatDate(l.fecha_movimiento)}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Badge className="bg-primary/10 text-primary border-0 text-xs">{l.tipo_movimiento}</Badge>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <button type="button" onClick={() => toggleExpandido(l.lote_id)} className="text-sm font-medium hover:underline">
+                              {l.activos.length} activo{l.activos.length !== 1 ? 's' : ''}
+                            </button>
+                            {l.activos.length === 1 && (
+                              <p className="text-xs text-muted-foreground font-mono">{l.activos[0].codigo}</p>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">
+                            <span className="text-muted-foreground">{l.espacio_origen}</span>
+                            <span className="mx-1">→</span>
+                            {l.espacio_destino}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">
+                            <p>{l.responsable_anterior || '—'}</p>
+                            <p className="text-muted-foreground">{l.responsable_nuevo || '—'}</p>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{l.aprobado_por || '—'}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right">
+                            <Button variant="ghost" size="sm" onClick={() => handleActa(l)}>
+                              <FileText className="h-3.5 w-3.5 mr-1" /> Acta
+                            </Button>
+                          </TableCell>
+                        </TableRow>,
+                        abierto && (
+                          <TableRow key={`${l.lote_id}-detalle`} className="bg-muted/30 hover:bg-muted/30">
+                            <TableCell colSpan={8} className="py-3">
+                              {l.motivo && <p className="text-xs mb-2"><span className="font-medium">Motivo:</span> {l.motivo}</p>}
+                              {l.observaciones && <p className="text-xs mb-2"><span className="font-medium">Observaciones:</span> {l.observaciones}</p>}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
+                                {l.activos.map((a, i) => (
+                                  <p key={`${a.codigo}-${i}`} className="text-xs">
+                                    <span className="font-mono text-muted-foreground">{a.codigo}</span> — {a.nombre}
+                                  </p>
+                                ))}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ),
+                      ];
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -275,22 +541,13 @@ export default function MovimientosPage() {
           </CardContent>
         </Card>
 
-        {/* Register movement dialog */}
+        {/* Registrar movimiento */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-2xl max-h-[90dvh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Registrar Movimiento de Activo</DialogTitle>
+              <DialogTitle>Registrar Movimiento de Activos</DialogTitle>
             </DialogHeader>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
-              <div className="md:col-span-2 space-y-2">
-                <Label>Activo *</Label>
-                <Select value={form.activo_id} onValueChange={v => setForm(f => ({ ...f, activo_id: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar activo" /></SelectTrigger>
-                  <SelectContent>
-                    {activos.map(a => <SelectItem key={a.id} value={a.id}>{a.codigo} — {a.nombre}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="space-y-2">
                 <Label>Tipo de movimiento</Label>
                 <Select value={form.tipo_movimiento} onValueChange={v => setForm(f => ({ ...f, tipo_movimiento: v }))}>
@@ -305,35 +562,148 @@ export default function MovimientosPage() {
               </div>
               <div className="space-y-2">
                 <Label>Espacio de origen</Label>
-                <Select value={form.espacio_origen_id} onValueChange={v => setForm(f => ({ ...f, espacio_origen_id: v }))}>
+                <Select value={form.espacio_origen_id} onValueChange={v => cambiarEspacio('origen', v)}>
                   <SelectTrigger><SelectValue placeholder="Origen" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Sin especificar</SelectItem>
-                    {espacios.map(e => <SelectItem key={e.id} value={e.id}>{e.nombre}</SelectItem>)}
+                    <SelectItem value={SIN_ESPACIO}>Sin especificar</SelectItem>
+                    {espacios.map(e => <SelectItem key={e.id} value={e.id}>{etiquetaEspacio(e)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>Espacio de destino</Label>
-                <Select value={form.espacio_destino_id} onValueChange={v => setForm(f => ({ ...f, espacio_destino_id: v }))}>
+                <Select value={form.espacio_destino_id} onValueChange={v => cambiarEspacio('destino', v)}>
                   <SelectTrigger><SelectValue placeholder="Destino" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">Sin especificar</SelectItem>
-                    {espacios.map(e => <SelectItem key={e.id} value={e.id}>{e.nombre}</SelectItem>)}
+                    <SelectItem value={SIN_ESPACIO}>Sin especificar</SelectItem>
+                    {espacios.map(e => <SelectItem key={e.id} value={e.id}>{etiquetaEspacio(e)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>Persona que entrega</Label>
-                <Input value={form.responsable_anterior} onChange={e => setForm(f => ({ ...f, responsable_anterior: e.target.value }))} placeholder="Nombre completo" />
+
+              {/* Selector múltiple de activos con búsqueda por código */}
+              <div className="md:col-span-2 space-y-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <Label>Activos * <span className="text-muted-foreground font-normal">({form.activo_ids.length} seleccionados)</span></Label>
+                  {form.activo_ids.length > 0 && (
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setForm(f => ({ ...f, activo_ids: [] }))}>
+                      Limpiar selección
+                    </Button>
+                  )}
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input className="pl-9" placeholder="Buscar por código o nombre..." value={busquedaActivo} onChange={e => setBusquedaActivo(e.target.value)} />
+                </div>
+                {form.espacio_origen_id !== SIN_ESPACIO && (
+                  <div className="flex items-center gap-2">
+                    <Checkbox id="solo-del-origen" checked={soloDelOrigen} onCheckedChange={v => setSoloDelOrigen(v === true)} />
+                    <label htmlFor="solo-del-origen" className="text-xs text-muted-foreground cursor-pointer">
+                      Mostrar solo los activos del espacio de origen
+                    </label>
+                  </div>
+                )}
+                <div className="border rounded-md divide-y max-h-56 overflow-y-auto">
+                  {activosFiltrados.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6">Ningún activo coincide con la búsqueda</p>
+                  ) : (
+                    activosFiltrados.slice(0, MAX_ACTIVOS_VISIBLES).map(a => (
+                      // La fila completa alterna la selección. La casilla es
+                      // decorativa (pointer-events-none) para que el clic no se
+                      // procese dos veces.
+                      <div
+                        key={a.id}
+                        role="checkbox"
+                        aria-checked={seleccionados.has(a.id)}
+                        tabIndex={0}
+                        onClick={() => toggleActivo(a.id)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleActivo(a.id); }
+                        }}
+                        className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 focus:bg-muted/50 focus:outline-none"
+                      >
+                        <Checkbox checked={seleccionados.has(a.id)} tabIndex={-1} className="pointer-events-none" />
+                        <span className="font-mono text-xs text-muted-foreground w-16 shrink-0">{a.codigo}</span>
+                        <span className="text-sm truncate">{a.nombre}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                  <span className="text-muted-foreground">
+                    {activosFiltrados.length > MAX_ACTIVOS_VISIBLES
+                      ? `Mostrando ${MAX_ACTIVOS_VISIBLES} de ${activosFiltrados.length} resultados — afina la búsqueda para ver el resto`
+                      : `${activosFiltrados.length} resultado${activosFiltrados.length !== 1 ? 's' : ''}`}
+                  </span>
+                  {activosFiltrados.length > 0 && (
+                    <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={seleccionarFiltrados}>
+                      Seleccionar los {activosFiltrados.length} resultados
+                    </Button>
+                  )}
+                </div>
+                {form.activo_ids.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                    {/* En un traslado masivo la selección puede ser de cientos de
+                        activos: se muestran las primeras y el resto se resume. */}
+                    {form.activo_ids.slice(0, MAX_CHIPS_SELECCION).map(id => {
+                      const a = activosPorId.get(id);
+                      if (!a) return null;
+                      return (
+                        <Badge key={id} variant="secondary" className="gap-1 font-normal">
+                          <span className="font-mono text-[11px]">{a.codigo}</span>
+                          <button type="button" onClick={() => toggleActivo(id)} aria-label={`Quitar ${a.codigo}`}>
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      );
+                    })}
+                    {form.activo_ids.length > MAX_CHIPS_SELECCION && (
+                      <Badge variant="outline" className="font-normal">
+                        +{form.activo_ids.length - MAX_CHIPS_SELECCION} más
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                {form.tipo_movimiento === 'Traslado' && (
+                  <p className="text-xs text-muted-foreground">
+                    Al registrar el traslado, los activos seleccionados quedarán ubicados en el espacio de destino dentro del inventario.
+                  </p>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label>Persona que recibe</Label>
-                <Input value={form.responsable_nuevo} onChange={e => setForm(f => ({ ...f, responsable_nuevo: e.target.value }))} placeholder="Nombre completo" />
-              </div>
+
+              <CampoPersona
+                etiqueta="Persona que entrega"
+                espacioId={form.espacio_origen_id}
+                responsables={responsablesPorEspacio.get(form.espacio_origen_id) ?? []}
+                valor={form.responsable_anterior}
+                onChange={v => setForm(f => ({ ...f, responsable_anterior: v }))}
+              />
+              <CampoPersona
+                etiqueta="Persona que recibe"
+                espacioId={form.espacio_destino_id}
+                responsables={responsablesPorEspacio.get(form.espacio_destino_id) ?? []}
+                valor={form.responsable_nuevo}
+                onChange={v => setForm(f => ({ ...f, responsable_nuevo: v }))}
+              />
+
               <div className="md:col-span-2 space-y-2">
                 <Label>Persona que aprueba</Label>
-                <Input value={form.aprobado_por} onChange={e => setForm(f => ({ ...f, aprobado_por: e.target.value }))} placeholder="Nombre completo" />
+                {aprobadores.length > 0 ? (
+                  <Select value={form.aprobado_por || undefined} onValueChange={v => setForm(f => ({ ...f, aprobado_por: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar aprobador" /></SelectTrigger>
+                    <SelectContent>
+                      {aprobadores.map(p => (
+                        <SelectItem key={p.id} value={p.nombre as string}>
+                          {p.nombre}{p.cargo ? ` — ${p.cargo}` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No hay usuarios con rol de Infraestructura o Administrador para aprobar el movimiento.
+                  </p>
+                )}
               </div>
               <div className="md:col-span-2 space-y-2">
                 <Label>Motivo *</Label>
@@ -346,7 +716,9 @@ export default function MovimientosPage() {
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-              <Button onClick={handleSave} disabled={saving}>{saving ? 'Guardando...' : 'Registrar Movimiento'}</Button>
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? 'Guardando...' : `Registrar y generar acta${form.activo_ids.length > 0 ? ` (${form.activo_ids.length})` : ''}`}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

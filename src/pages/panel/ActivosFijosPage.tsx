@@ -24,6 +24,7 @@ import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import type { ActivoFijo, EspacioFisico, EstadoActivo } from '@/types/types';
 import { formatCurrency, formatDate, getEstadoColor } from '@/lib/utils';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 import { exportToExcel, exportToPDF } from '@/lib/export';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
@@ -98,8 +99,17 @@ export default function ActivosFijosPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     const [{ data: activosData }, { data: espaciosData }, { data: catsData }, { data: estadosData }, { data: respData }, { data: provData }] = await Promise.all([
-      supabase.from('activos_fijos').select('*, espacio:espacios_fisicos(id,nombre,sede,bloque)').eq('dado_de_baja', false).order('created_at', { ascending: false }),
-      supabase.from('espacios_fisicos').select('id,nombre,sede,bloque').order('nombre'),
+      // Paginado: el inventario supera las 1.000 filas que devuelve PostgREST por respuesta.
+      fetchAllRows<ActivoFijo>(() =>
+        supabase.from('activos_fijos')
+          .select('*, espacio:espacios_fisicos(id,nombre,sede,bloque)')
+          .eq('dado_de_baja', false)
+          .order('created_at', { ascending: false })
+          .order('id')
+      ),
+      fetchAllRows(() =>
+        supabase.from('espacios_fisicos').select('id,nombre,sede,bloque').order('nombre').order('id')
+      ),
       supabase.from('categorias_activos').select('nombre').eq('activo', true).order('nombre'),
       supabase.from('estados_activos').select('nombre').eq('activo', true).order('nombre'),
       supabase.from('responsables_activos').select('nombre').eq('activo', true).order('nombre'),
