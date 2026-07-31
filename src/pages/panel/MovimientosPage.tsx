@@ -160,7 +160,6 @@ export default function MovimientosPage() {
   const [form, setForm] = useState<MovimientoForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [busquedaActivo, setBusquedaActivo] = useState('');
-  const [soloDelOrigen, setSoloDelOrigen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -261,15 +260,28 @@ export default function MovimientosPage() {
   }, [lotes, search]);
 
   // ─── Selector de activos ─────────────────────────────────────────────────
+  /**
+   * Solo se pueden mover activos que estén en el espacio de origen. La
+   * restricción no es opcional: mover un activo desde un espacio donde no está
+   * es un error de registro, no una preferencia de filtrado.
+   */
   const activosFiltrados = useMemo(() => {
+    if (form.espacio_origen_id === SIN_ESPACIO) return [];
     const q = busquedaActivo.trim().toLowerCase();
-    const filtrarPorOrigen = soloDelOrigen && form.espacio_origen_id !== SIN_ESPACIO;
     return activos.filter(a => {
-      if (filtrarPorOrigen && a.espacio_id !== form.espacio_origen_id) return false;
+      if (a.espacio_id !== form.espacio_origen_id) return false;
       if (!q) return true;
       return a.codigo?.toLowerCase().includes(q) || a.nombre?.toLowerCase().includes(q);
     });
-  }, [activos, busquedaActivo, soloDelOrigen, form.espacio_origen_id]);
+  }, [activos, busquedaActivo, form.espacio_origen_id]);
+
+  /** Activos del espacio de origen, sin aplicar la búsqueda por texto. */
+  const totalEnOrigen = useMemo(
+    () => form.espacio_origen_id === SIN_ESPACIO
+      ? 0
+      : activos.filter(a => a.espacio_id === form.espacio_origen_id).length,
+    [activos, form.espacio_origen_id],
+  );
 
   const seleccionados = useMemo(() => new Set(form.activo_ids), [form.activo_ids]);
   const activosPorId = useMemo(() => new Map(activos.map(a => [a.id, a])), [activos]);
@@ -288,16 +300,28 @@ export default function MovimientosPage() {
   /**
    * Al elegir un espacio, la persona que entrega/recibe se toma de sus
    * responsables asignados: si hay uno solo queda preseleccionado, si hay
-   * varios el usuario escoge. Cambiar el origen reactiva el filtro del
-   * selector, que es lo habitual en un traslado masivo.
+   * varios el usuario escoge.
+   *
+   * Cambiar el origen descarta los activos ya seleccionados que no pertenezcan
+   * al nuevo espacio, para que no se cuele en el movimiento un activo elegido
+   * bajo el origen anterior.
    */
   const cambiarEspacio = (campo: 'origen' | 'destino', valor: string) => {
     const nombres = responsablesPorEspacio.get(valor) ?? [];
     const unico = nombres.length === 1 ? nombres[0] : '';
-    setForm(f => campo === 'origen'
-      ? { ...f, espacio_origen_id: valor, responsable_anterior: unico }
-      : { ...f, espacio_destino_id: valor, responsable_nuevo: unico });
-    if (campo === 'origen') setSoloDelOrigen(valor !== SIN_ESPACIO);
+    if (campo === 'destino') {
+      setForm(f => ({ ...f, espacio_destino_id: valor, responsable_nuevo: unico }));
+      return;
+    }
+    const conservados = form.activo_ids.filter(id => activosPorId.get(id)?.espacio_id === valor);
+    const descartados = form.activo_ids.length - conservados.length;
+    setForm(f => ({ ...f, espacio_origen_id: valor, responsable_anterior: unico, activo_ids: conservados }));
+    setBusquedaActivo('');
+    if (descartados > 0) {
+      toast.info(
+        `Se quitaron ${descartados} activo${descartados !== 1 ? 's' : ''} de la selección por no estar en el espacio de origen`,
+      );
+    }
   };
 
   const abrirDialogo = () => {
@@ -307,7 +331,6 @@ export default function MovimientosPage() {
     const porDefecto = yo ?? (aprobadores.length === 1 ? aprobadores[0] : null);
     setForm({ ...EMPTY_FORM, aprobado_por: porDefecto?.nombre ?? '' });
     setBusquedaActivo('');
-    setSoloDelOrigen(false);
     setDialogOpen(true);
   };
 
@@ -340,7 +363,16 @@ export default function MovimientosPage() {
   };
 
   const handleSave = async () => {
+    if (form.espacio_origen_id === SIN_ESPACIO) { toast.error('Selecciona el espacio de origen'); return; }
     if (form.activo_ids.length === 0) { toast.error('Selecciona al menos un activo'); return; }
+    // Red de seguridad: la interfaz ya solo ofrece activos del espacio de
+    // origen, pero si el inventario cambió mientras el diálogo estaba abierto
+    // la selección podría haber quedado desfasada.
+    const fueraDeOrigen = form.activo_ids.filter(id => activosPorId.get(id)?.espacio_id !== form.espacio_origen_id);
+    if (fueraDeOrigen.length > 0) {
+      toast.error('Hay activos seleccionados que ya no están en el espacio de origen. Vuelve a elegirlos.');
+      return;
+    }
     if (!form.motivo.trim()) { toast.error('El motivo es obligatorio'); return; }
     if (form.tipo_movimiento === 'Traslado' && form.espacio_destino_id === SIN_ESPACIO) {
       toast.error('Un traslado necesita un espacio de destino');
@@ -593,18 +625,24 @@ export default function MovimientosPage() {
                 </div>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input className="pl-9" placeholder="Buscar por código o nombre..." value={busquedaActivo} onChange={e => setBusquedaActivo(e.target.value)} />
+                  <Input
+                    className="pl-9"
+                    placeholder="Buscar por código o nombre..."
+                    value={busquedaActivo}
+                    onChange={e => setBusquedaActivo(e.target.value)}
+                    disabled={form.espacio_origen_id === SIN_ESPACIO}
+                  />
                 </div>
-                {form.espacio_origen_id !== SIN_ESPACIO && (
-                  <div className="flex items-center gap-2">
-                    <Checkbox id="solo-del-origen" checked={soloDelOrigen} onCheckedChange={v => setSoloDelOrigen(v === true)} />
-                    <label htmlFor="solo-del-origen" className="text-xs text-muted-foreground cursor-pointer">
-                      Mostrar solo los activos del espacio de origen
-                    </label>
-                  </div>
-                )}
                 <div className="border rounded-md divide-y max-h-56 overflow-y-auto">
-                  {activosFiltrados.length === 0 ? (
+                  {form.espacio_origen_id === SIN_ESPACIO ? (
+                    <p className="text-sm text-muted-foreground text-center py-6 px-4">
+                      Selecciona primero el espacio de origen: solo se pueden mover activos que estén en ese espacio.
+                    </p>
+                  ) : totalEnOrigen === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6 px-4">
+                      El espacio de origen no tiene activos registrados.
+                    </p>
+                  ) : activosFiltrados.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-6">Ningún activo coincide con la búsqueda</p>
                   ) : (
                     activosFiltrados.slice(0, MAX_ACTIVOS_VISIBLES).map(a => (
@@ -629,18 +667,22 @@ export default function MovimientosPage() {
                     ))
                   )}
                 </div>
-                <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
-                  <span className="text-muted-foreground">
-                    {activosFiltrados.length > MAX_ACTIVOS_VISIBLES
-                      ? `Mostrando ${MAX_ACTIVOS_VISIBLES} de ${activosFiltrados.length} resultados — afina la búsqueda para ver el resto`
-                      : `${activosFiltrados.length} resultado${activosFiltrados.length !== 1 ? 's' : ''}`}
-                  </span>
-                  {activosFiltrados.length > 0 && (
-                    <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={seleccionarFiltrados}>
-                      Seleccionar los {activosFiltrados.length} resultados
-                    </Button>
-                  )}
-                </div>
+                {form.espacio_origen_id !== SIN_ESPACIO && totalEnOrigen > 0 && (
+                  <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                    <span className="text-muted-foreground">
+                      {activosFiltrados.length > MAX_ACTIVOS_VISIBLES
+                        ? `Mostrando ${MAX_ACTIVOS_VISIBLES} de ${activosFiltrados.length} — afina la búsqueda para ver el resto`
+                        : busquedaActivo.trim()
+                          ? `${activosFiltrados.length} de ${totalEnOrigen} activos del espacio de origen`
+                          : `${totalEnOrigen} activo${totalEnOrigen !== 1 ? 's' : ''} en el espacio de origen`}
+                    </span>
+                    {activosFiltrados.length > 0 && (
+                      <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={seleccionarFiltrados}>
+                        Seleccionar los {activosFiltrados.length}
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {form.activo_ids.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
                     {/* En un traslado masivo la selección puede ser de cientos de
