@@ -13,6 +13,7 @@ import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import type { ActivoFijo, MotivoBaja } from '@/types/types';
 import { formatDate, formatCurrency } from '@/lib/utils';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 import { toast } from 'sonner';
 
 const MOTIVOS: MotivoBaja[] = ['Deterioro', 'Robo', 'Obsolescencia', 'Donación', 'Otro'];
@@ -36,7 +37,10 @@ export default function BajasPage() {
         id, motivo, descripcion, fecha_baja,
         activo:activos_fijos(codigo, nombre, valor)
       `).order('fecha_baja', { ascending: false }),
-      supabase.from('activos_fijos').select('id, codigo, nombre, valor').eq('dado_de_baja', false).order('nombre'),
+      // Paginado: el selector debe ofrecer todo el inventario, no las primeras 1.000 filas.
+      fetchAllRows<{ id: string; codigo: string; nombre: string; valor: number }>(() =>
+        supabase.from('activos_fijos').select('id, codigo, nombre, valor').eq('dado_de_baja', false).order('nombre').order('id')
+      ),
     ]);
     setBajas((Array.isArray(bajasData) ? bajasData : []).map((b) => ({
       id: b.id, motivo: b.motivo, descripcion: b.descripcion || '', fecha_baja: b.fecha_baja,

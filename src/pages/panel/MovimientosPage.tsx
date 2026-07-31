@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
 import { formatDateTime } from '@/lib/utils';
+import { fetchAllRows } from '@/lib/supabase-fetch';
 import { toast } from 'sonner';
 
 const TIPOS_MOVIMIENTO = ['Traslado', 'Préstamo', 'Cambio de responsable', 'Mantenimiento', 'Retiro temporal', 'Otro'];
@@ -81,7 +82,10 @@ export default function MovimientosPage() {
         `)
         .order('fecha_movimiento', { ascending: false })
         .limit(200),
-      supabase.from('activos_fijos').select('id, codigo, nombre').eq('dado_de_baja', false).order('nombre'),
+      // Paginado: el selector debe ofrecer todo el inventario, no las primeras 1.000 filas.
+      fetchAllRows<{ id: string; codigo: string; nombre: string }>(() =>
+        supabase.from('activos_fijos').select('id, codigo, nombre').eq('dado_de_baja', false).order('nombre').order('id')
+      ),
       supabase.from('espacios_fisicos').select('id, nombre').order('nombre'),
     ]);
 
