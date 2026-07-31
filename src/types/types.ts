@@ -153,6 +153,8 @@ export interface ActivoFijo {
 
 export interface MovimientoActivo {
   id: string;
+  /** Agrupa los activos movidos juntos en un mismo movimiento (y una misma acta). */
+  lote_id: string;
   activo_id: string;
   tipo_movimiento: string;
   espacio_origen_id: string | null;
