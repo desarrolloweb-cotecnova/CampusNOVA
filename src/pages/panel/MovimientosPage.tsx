@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { ArrowLeftRight, Search, Plus, FileText, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { ArrowLeftRight, Search, Plus, FileText, ChevronDown, ChevronRight, X, ShieldCheck, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +34,10 @@ const MAX_CHIPS_SELECCION = 30;
 const BLOQUE_ESCRITURA = 500;
 
 const SIN_ESPACIO = 'none';
+
+/** Estados del movimiento. El visto bueno del rector es lo que lo completa. */
+const ESTADO_PENDIENTE = 'Pendiente de visto bueno';
+const ESTADO_CON_VISTO_BUENO = 'Con visto bueno';
 
 interface ActivoOpcion {
   id: string;
@@ -71,7 +76,9 @@ interface LoteMovimiento {
   responsable_anterior: string | null;
   responsable_nuevo: string | null;
   aprobado_por: string | null;
+  estado: string;
   visto_bueno_rector: string | null;
+  visto_bueno_fecha: string | null;
   motivo: string | null;
   observaciones: string | null;
   activos: ActivoActa[];
@@ -160,6 +167,11 @@ export default function MovimientosPage() {
   const [form, setForm] = useState<MovimientoForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [busquedaActivo, setBusquedaActivo] = useState('');
+  const [vistoBuenoEnCurso, setVistoBuenoEnCurso] = useState<string | null>(null);
+  // El panel general enlaza aquí con ?pendientes=1 para mostrar solo lo que
+  // espera el visto bueno del rector.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const soloPendientes = searchParams.get('pendientes') === '1';
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -170,7 +182,8 @@ export default function MovimientosPage() {
         supabase
           .from('movimientos_activos')
           .select(`
-            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por, visto_bueno_rector,
+            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por,
+            estado, visto_bueno_rector, visto_bueno_fecha,
             fecha_movimiento, created_at,
             responsable_anterior, responsable_nuevo,
             activo:activos_fijos(codigo, nombre, categoria, estado),
@@ -209,7 +222,9 @@ export default function MovimientosPage() {
           responsable_anterior: (fila.responsable_anterior as string) || null,
           responsable_nuevo: (fila.responsable_nuevo as string) || null,
           aprobado_por: (fila.aprobado_por as string) || null,
+          estado: (fila.estado as string) || ESTADO_PENDIENTE,
           visto_bueno_rector: (fila.visto_bueno_rector as string) || null,
+          visto_bueno_fecha: (fila.visto_bueno_fecha as string) || null,
           motivo: (fila.motivo as string) || null,
           observaciones: (fila.observaciones as string) || null,
           activos: [],
@@ -250,6 +265,8 @@ export default function MovimientosPage() {
    * Administración pueden hacerlo.
    */
   const puedeAprobar = ROLES_APRUEBAN.includes(profile?.role ?? '');
+  /** Solo el rector refrenda: es su visto bueno lo que completa el movimiento. */
+  const puedeDarVistoBueno = profile?.role === 'rector';
   const nombreAprobador = profile?.nombre?.trim() || '';
 
   /** Rector vigente, para el visto bueno del acta. */
@@ -260,13 +277,16 @@ export default function MovimientosPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return lotes;
-    return lotes.filter(l =>
+    const base = soloPendientes ? lotes.filter(l => l.estado === ESTADO_PENDIENTE) : lotes;
+    if (!q) return base;
+    return base.filter(l =>
       [l.tipo_movimiento, l.motivo, l.espacio_origen, l.espacio_destino, l.responsable_anterior, l.responsable_nuevo]
         .some(f => f?.toLowerCase().includes(q)) ||
       l.activos.some(a => a.codigo?.toLowerCase().includes(q) || a.nombre?.toLowerCase().includes(q))
     );
-  }, [lotes, search]);
+  }, [lotes, search, soloPendientes]);
+
+  const pendientes = useMemo(() => lotes.filter(l => l.estado === ESTADO_PENDIENTE).length, [lotes]);
 
   // ─── Selector de activos ─────────────────────────────────────────────────
   /**
@@ -347,6 +367,29 @@ export default function MovimientosPage() {
     });
   };
 
+  /**
+   * El rector refrenda el movimiento. Se marcan todas las filas del lote: el
+   * visto bueno es sobre el movimiento completo, no sobre un activo suelto.
+   */
+  const darVistoBueno = async (lote: LoteMovimiento) => {
+    const nombre = profile?.nombre?.trim();
+    if (!puedeDarVistoBueno || !nombre) return;
+    setVistoBuenoEnCurso(lote.lote_id);
+    const { error } = await supabase
+      .from('movimientos_activos')
+      .update({
+        estado: ESTADO_CON_VISTO_BUENO,
+        visto_bueno_rector: nombre,
+        visto_bueno_por: profile?.id ?? null,
+        visto_bueno_fecha: new Date().toISOString(),
+      })
+      .eq('lote_id', lote.lote_id);
+    setVistoBuenoEnCurso(null);
+    if (error) { toast.error('No se pudo registrar el visto bueno: ' + error.message); return; }
+    toast.success(`Visto bueno registrado sobre ${lote.activos.length} activo${lote.activos.length !== 1 ? 's' : ''}`);
+    loadData();
+  };
+
   const handleActa = async (lote: LoteMovimiento) => {
     try {
       await generarActaMovimientoPDF({
@@ -396,7 +439,7 @@ export default function MovimientosPage() {
       responsable_anterior: form.responsable_anterior || null,
       responsable_nuevo: form.responsable_nuevo || null,
       aprobado_por: nombreAprobador || null,
-      visto_bueno_rector: rector || null,
+      estado: ESTADO_PENDIENTE,
       fecha_movimiento: form.fecha_movimiento,
       motivo: form.motivo,
       observaciones: form.observaciones || null,
@@ -460,7 +503,8 @@ export default function MovimientosPage() {
       personaEntrega: form.responsable_anterior,
       personaRecibe: form.responsable_nuevo,
       personaAprueba: nombreAprobador,
-      vistoBuenoRector: rector,
+      // Aún sin visto bueno: el acta sale con la línea del rector en blanco.
+      vistoBuenoRector: '',
       motivo: form.motivo,
       observaciones: form.observaciones,
       activos: activosActa,
@@ -493,8 +537,20 @@ export default function MovimientosPage() {
 
         {/* Historial agrupado por lote */}
         <Card className="shadow-card min-w-0">
-          <CardHeader>
-            <CardTitle className="text-base">Historial de Movimientos ({filtered.length})</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap space-y-0">
+            <CardTitle className="text-base">
+              {soloPendientes ? 'Pendientes de visto bueno' : 'Historial de Movimientos'} ({filtered.length})
+            </CardTitle>
+            {(pendientes > 0 || soloPendientes) && (
+              <Button
+                variant={soloPendientes ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setSearchParams(soloPendientes ? {} : { pendientes: '1' })}
+              >
+                <Clock className="h-3.5 w-3.5 mr-1.5" />
+                {soloPendientes ? 'Ver todos' : `Pendientes de visto bueno (${pendientes})`}
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="p-0">
             <div className="w-full overflow-x-auto">
@@ -508,17 +564,18 @@ export default function MovimientosPage() {
                     <TableHead className="whitespace-nowrap">Origen → Destino</TableHead>
                     <TableHead className="whitespace-nowrap">Entrega / Recibe</TableHead>
                     <TableHead className="whitespace-nowrap">Aprueba</TableHead>
+                    <TableHead className="whitespace-nowrap">Visto bueno</TableHead>
                     <TableHead className="whitespace-nowrap text-right">Acta</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
                     Array(5).fill(0).map((_, i) => (
-                      <TableRow key={i}>{Array(8).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}</TableRow>
+                      <TableRow key={i}>{Array(9).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}</TableRow>
                     ))
                   ) : filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                         <ArrowLeftRight className="h-10 w-10 mx-auto mb-2 opacity-30" />
                         No hay movimientos registrados
                       </TableCell>
@@ -556,6 +613,27 @@ export default function MovimientosPage() {
                             <p className="text-muted-foreground">{l.responsable_nuevo || '—'}</p>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{l.aprobado_por || '—'}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {l.estado === ESTADO_CON_VISTO_BUENO ? (
+                              <div className="text-xs">
+                                <Badge className="bg-green-100 text-green-800 border-0 text-xs">
+                                  <ShieldCheck className="h-3 w-3 mr-1" /> Visto bueno
+                                </Badge>
+                                <p className="text-muted-foreground mt-0.5">{l.visto_bueno_rector}</p>
+                              </div>
+                            ) : puedeDarVistoBueno ? (
+                              <Button size="sm" variant="outline" className="h-7 text-xs"
+                                disabled={vistoBuenoEnCurso === l.lote_id}
+                                onClick={() => darVistoBueno(l)}>
+                                <ShieldCheck className="h-3.5 w-3.5 mr-1" />
+                                {vistoBuenoEnCurso === l.lote_id ? 'Registrando...' : 'Dar visto bueno'}
+                              </Button>
+                            ) : (
+                              <Badge variant="outline" className="text-xs font-normal">
+                                <Clock className="h-3 w-3 mr-1" /> Pendiente
+                              </Badge>
+                            )}
+                          </TableCell>
                           <TableCell className="whitespace-nowrap text-right">
                             <Button variant="ghost" size="sm" onClick={() => handleActa(l)}>
                               <FileText className="h-3.5 w-3.5 mr-1" /> Acta
@@ -564,7 +642,7 @@ export default function MovimientosPage() {
                         </TableRow>,
                         abierto && (
                           <TableRow key={`${l.lote_id}-detalle`} className="bg-muted/30 hover:bg-muted/30">
-                            <TableCell colSpan={8} className="py-3">
+                            <TableCell colSpan={9} className="py-3">
                               {l.motivo && <p className="text-xs mb-2"><span className="font-medium">Motivo:</span> {l.motivo}</p>}
                               {l.observaciones && <p className="text-xs mb-2"><span className="font-medium">Observaciones:</span> {l.observaciones}</p>}
                               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
@@ -751,7 +829,9 @@ export default function MovimientosPage() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Queda registrado a tu nombre por ser el usuario autenticado.
-                  {rector && ` El acta incluye además el visto bueno del rector (${rector}).`}
+                  {rector
+                    ? ` El movimiento quedará pendiente del visto bueno del rector (${rector}), que lo completa desde esta misma página.`
+                    : ' El movimiento quedará pendiente del visto bueno del rector.'}
                 </p>
               </div>
               <div className="md:col-span-2 space-y-2">
