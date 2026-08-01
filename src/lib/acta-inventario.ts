@@ -7,7 +7,7 @@
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
 import type { ActivoFijo, EspacioFisico, Profile } from '@/types/types';
-import { cargarLogo, slug } from '@/lib/acta-comun';
+import { altoBloqueFirmas, cargarLogo, dibujarFirmas, type FirmaActa, slug } from '@/lib/acta-comun';
 
 /** Nota legal del reglamento interno (texto solicitado, literal). */
 const NOTA_LEGAL =
@@ -224,29 +224,13 @@ export async function generarActaInventarioPDF({
   y += noteLines.length * 3.6;
 
   // ── Firmas ─────────────────────────────────────────────────────────────
-  ensure(32);
-  y += 18; // espacio para firmar sobre la línea
-  const gap = 8;
-  const colW = (pageW - margin * 2 - gap * 2) / 3;
-  const firmas: { nombre: string; cargo: string }[] = [
+  const firmas: FirmaActa[] = [
     { nombre: responsable.nombre || '', cargo: 'Responsable / Colaborador' },
     { nombre: '', cargo: 'Administrador de Infraestructura Física' },
     { nombre: '', cargo: 'Rector' },
   ];
-  firmas.forEach((f, i) => {
-    const x = margin + i * (colW + gap);
-    doc.setDrawColor(70, 70, 70);
-    doc.setLineWidth(0.3);
-    doc.line(x, y, x + colW, y);
-    doc.setFontSize(8);
-    doc.setTextColor(0, 0, 0);
-    if (f.nombre) {
-      doc.setFont('helvetica', 'bold');
-      doc.text(doc.splitTextToSize(f.nombre, colW), x + colW / 2, y + 4, { align: 'center' });
-    }
-    doc.setFont('helvetica', 'normal');
-    doc.text(doc.splitTextToSize(f.cargo, colW), x + colW / 2, y + (f.nombre ? 8 : 4), { align: 'center' });
-  });
+  ensure(altoBloqueFirmas(doc, firmas, pageW, margin));
+  y = dibujarFirmas(doc, firmas, pageW, margin, y);
 
   // ── Numeración de páginas (Página X de Y) ──────────────────────────────
   const totalPages = doc.getNumberOfPages();

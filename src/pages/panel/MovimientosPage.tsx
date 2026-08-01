@@ -71,6 +71,7 @@ interface LoteMovimiento {
   responsable_anterior: string | null;
   responsable_nuevo: string | null;
   aprobado_por: string | null;
+  visto_bueno_rector: string | null;
   motivo: string | null;
   observaciones: string | null;
   activos: ActivoActa[];
@@ -83,7 +84,6 @@ interface MovimientoForm {
   espacio_destino_id: string;
   responsable_anterior: string;
   responsable_nuevo: string;
-  aprobado_por: string;
   fecha_movimiento: string;
   motivo: string;
   observaciones: string;
@@ -92,7 +92,7 @@ interface MovimientoForm {
 const EMPTY_FORM: MovimientoForm = {
   activo_ids: [], tipo_movimiento: 'Traslado',
   espacio_origen_id: SIN_ESPACIO, espacio_destino_id: SIN_ESPACIO,
-  responsable_anterior: '', responsable_nuevo: '', aprobado_por: '',
+  responsable_anterior: '', responsable_nuevo: '',
   fecha_movimiento: new Date().toISOString().slice(0, 10),
   motivo: '', observaciones: '',
 };
@@ -170,7 +170,7 @@ export default function MovimientosPage() {
         supabase
           .from('movimientos_activos')
           .select(`
-            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por,
+            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por, visto_bueno_rector,
             fecha_movimiento, created_at,
             responsable_anterior, responsable_nuevo,
             activo:activos_fijos(codigo, nombre, categoria, estado),
@@ -209,6 +209,7 @@ export default function MovimientosPage() {
           responsable_anterior: (fila.responsable_anterior as string) || null,
           responsable_nuevo: (fila.responsable_nuevo as string) || null,
           aprobado_por: (fila.aprobado_por as string) || null,
+          visto_bueno_rector: (fila.visto_bueno_rector as string) || null,
           motivo: (fila.motivo as string) || null,
           observaciones: (fila.observaciones as string) || null,
           activos: [],
@@ -243,9 +244,17 @@ export default function MovimientosPage() {
     return mapa;
   }, [asignaciones, perfiles]);
 
-  /** Usuarios habilitados para aprobar el movimiento. */
-  const aprobadores = useMemo(
-    () => perfiles.filter(p => ROLES_APRUEBAN.includes(p.role) && p.nombre?.trim()),
+  /**
+   * Quien autoriza el movimiento es el usuario autenticado, no una elección:
+   * el acta debe reflejar quién lo registró. Solo Infraestructura y
+   * Administración pueden hacerlo.
+   */
+  const puedeAprobar = ROLES_APRUEBAN.includes(profile?.role ?? '');
+  const nombreAprobador = profile?.nombre?.trim() || '';
+
+  /** Rector vigente, para el visto bueno del acta. */
+  const rector = useMemo(
+    () => perfiles.find(p => p.role === 'rector' && p.nombre?.trim())?.nombre?.trim() || '',
     [perfiles],
   );
 
@@ -325,11 +334,7 @@ export default function MovimientosPage() {
   };
 
   const abrirDialogo = () => {
-    // Si quien registra puede aprobar, queda preseleccionado; si solo hay un
-    // aprobador posible, se toma ese.
-    const yo = aprobadores.find(p => p.id === profile?.id);
-    const porDefecto = yo ?? (aprobadores.length === 1 ? aprobadores[0] : null);
-    setForm({ ...EMPTY_FORM, aprobado_por: porDefecto?.nombre ?? '' });
+    setForm(EMPTY_FORM);
     setBusquedaActivo('');
     setDialogOpen(true);
   };
@@ -353,6 +358,7 @@ export default function MovimientosPage() {
         personaEntrega: lote.responsable_anterior || '',
         personaRecibe: lote.responsable_nuevo || '',
         personaAprueba: lote.aprobado_por || '',
+        vistoBuenoRector: lote.visto_bueno_rector || '',
         motivo: lote.motivo || '',
         observaciones: lote.observaciones || '',
         activos: lote.activos,
@@ -363,6 +369,7 @@ export default function MovimientosPage() {
   };
 
   const handleSave = async () => {
+    if (!puedeAprobar) { toast.error('Solo Infraestructura o Administración pueden registrar movimientos'); return; }
     if (form.espacio_origen_id === SIN_ESPACIO) { toast.error('Selecciona el espacio de origen'); return; }
     if (form.activo_ids.length === 0) { toast.error('Selecciona al menos un activo'); return; }
     // Red de seguridad: la interfaz ya solo ofrece activos del espacio de
@@ -388,7 +395,8 @@ export default function MovimientosPage() {
       espacio_destino_id: form.espacio_destino_id === SIN_ESPACIO ? null : form.espacio_destino_id,
       responsable_anterior: form.responsable_anterior || null,
       responsable_nuevo: form.responsable_nuevo || null,
-      aprobado_por: form.aprobado_por || null,
+      aprobado_por: nombreAprobador || null,
+      visto_bueno_rector: rector || null,
       fecha_movimiento: form.fecha_movimiento,
       motivo: form.motivo,
       observaciones: form.observaciones || null,
@@ -451,7 +459,8 @@ export default function MovimientosPage() {
       espacioDestino: etiquetaEspacio(espacios.find(e => e.id === base.espacio_destino_id)),
       personaEntrega: form.responsable_anterior,
       personaRecibe: form.responsable_nuevo,
-      personaAprueba: form.aprobado_por,
+      personaAprueba: nombreAprobador,
+      vistoBuenoRector: rector,
       motivo: form.motivo,
       observaciones: form.observaciones,
       activos: activosActa,
@@ -471,7 +480,11 @@ export default function MovimientosPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Buscar por activo, código, espacio o motivo..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
               </div>
-              <Button onClick={abrirDialogo}>
+              {/* Registrar equivale a autorizar: solo Infraestructura y
+                  Administración. Los demás roles consultan el historial y
+                  descargan actas. */}
+              <Button onClick={abrirDialogo} disabled={!puedeAprobar}
+                title={puedeAprobar ? undefined : 'Solo los usuarios de Infraestructura o Administración pueden registrar movimientos'}>
                 <Plus className="h-4 w-4 mr-1.5" /> Registrar Movimiento
               </Button>
             </div>
@@ -728,24 +741,18 @@ export default function MovimientosPage() {
                 onChange={v => setForm(f => ({ ...f, responsable_nuevo: v }))}
               />
 
+              {/* Quien autoriza no se pregunta: es el usuario de la sesión. Se
+                  muestra solo para que quede claro qué nombre llevará el acta. */}
               <div className="md:col-span-2 space-y-2">
-                <Label>Persona que aprueba</Label>
-                {aprobadores.length > 0 ? (
-                  <Select value={form.aprobado_por || undefined} onValueChange={v => setForm(f => ({ ...f, aprobado_por: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccionar aprobador" /></SelectTrigger>
-                    <SelectContent>
-                      {aprobadores.map(p => (
-                        <SelectItem key={p.id} value={p.nombre as string}>
-                          {p.nombre}{p.cargo ? ` — ${p.cargo}` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No hay usuarios con rol de Infraestructura o Administrador para aprobar el movimiento.
-                  </p>
-                )}
+                <Label>Autoriza el movimiento</Label>
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                  {nombreAprobador || 'Tu usuario no tiene nombre configurado'}
+                  {profile?.cargo && <span className="text-muted-foreground"> — {profile.cargo}</span>}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Queda registrado a tu nombre por ser el usuario autenticado.
+                  {rector && ` El acta incluye además el visto bueno del rector (${rector}).`}
+                </p>
               </div>
               <div className="md:col-span-2 space-y-2">
                 <Label>Motivo *</Label>
