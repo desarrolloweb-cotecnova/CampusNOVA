@@ -155,6 +155,11 @@ export interface MovimientoActivo {
   id: string;
   /** Agrupa los activos movidos juntos en un mismo movimiento (y una misma acta). */
   lote_id: string;
+  /** 'Pendiente de visto bueno' hasta que el rector lo refrenda. */
+  estado: string;
+  visto_bueno_rector: string | null;
+  visto_bueno_por: string | null;
+  visto_bueno_fecha: string | null;
   activo_id: string;
   tipo_movimiento: string;
   espacio_origen_id: string | null;
@@ -180,6 +185,11 @@ export interface BajaActivo {
   descripcion: string | null;
   acta_pdf_url: string | null;
   registrado_por: string | null;
+  /** 'Pendiente de visto bueno' hasta que el rector la refrenda. */
+  estado: string;
+  visto_bueno_rector: string | null;
+  visto_bueno_por: string | null;
+  visto_bueno_fecha: string | null;
   created_at: string;
 }
 

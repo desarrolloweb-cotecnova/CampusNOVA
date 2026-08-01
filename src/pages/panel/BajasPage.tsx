@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { Plus, Search, Trash2, ShieldCheck, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import type { ActivoFijo, MotivoBaja } from '@/types/types';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import { fetchAllRows } from '@/lib/supabase-fetch';
@@ -18,11 +19,18 @@ import { toast } from 'sonner';
 
 const MOTIVOS: MotivoBaja[] = ['Deterioro', 'Robo', 'Obsolescencia', 'Donación', 'Otro'];
 
+/** Estados de la baja. El visto bueno del rector es lo que la completa. */
+const ESTADO_PENDIENTE = 'Pendiente de visto bueno';
+const ESTADO_CON_VISTO_BUENO = 'Con visto bueno';
+
 export default function BajasPage() {
+  const { profile } = useAuth();
   const [bajas, setBajas] = useState<{
     id: string; activo_codigo: string; activo_nombre: string; activo_valor: number;
     motivo: string; descripcion: string; fecha_baja: string;
+    estado: string; visto_bueno_rector: string | null;
   }[]>([]);
+  const [vistoBuenoEnCurso, setVistoBuenoEnCurso] = useState<string | null>(null);
   const [activosActivos, setActivosActivos] = useState<ActivoFijo[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -34,7 +42,7 @@ export default function BajasPage() {
     setLoading(true);
     const [{ data: bajasData }, { data: activosData }] = await Promise.all([
       supabase.from('bajas_activos').select(`
-        id, motivo, descripcion, fecha_baja,
+        id, motivo, descripcion, fecha_baja, estado, visto_bueno_rector,
         activo:activos_fijos(codigo, nombre, valor)
       `).order('fecha_baja', { ascending: false }),
       // Paginado: el selector debe ofrecer todo el inventario, no las primeras 1.000 filas.
@@ -44,6 +52,8 @@ export default function BajasPage() {
     ]);
     setBajas((Array.isArray(bajasData) ? bajasData : []).map((b) => ({
       id: b.id, motivo: b.motivo, descripcion: b.descripcion || '', fecha_baja: b.fecha_baja,
+      estado: b.estado || ESTADO_PENDIENTE,
+      visto_bueno_rector: b.visto_bueno_rector || null,
       activo_codigo: (b.activo as unknown as { codigo: string })?.codigo || '—',
       activo_nombre: (b.activo as unknown as { nombre: string })?.nombre || '—',
       activo_valor: (b.activo as unknown as { valor: number })?.valor || 0,
@@ -57,6 +67,28 @@ export default function BajasPage() {
   const filtered = bajas.filter(b =>
     !search || [b.activo_nombre, b.activo_codigo, b.motivo].some(f => f?.toLowerCase().includes(search.toLowerCase()))
   );
+
+  /** Solo el rector refrenda: es su visto bueno lo que completa la baja. */
+  const puedeDarVistoBueno = profile?.role === 'rector';
+
+  const darVistoBueno = async (bajaId: string) => {
+    const nombre = profile?.nombre?.trim();
+    if (!puedeDarVistoBueno || !nombre) return;
+    setVistoBuenoEnCurso(bajaId);
+    const { error } = await supabase
+      .from('bajas_activos')
+      .update({
+        estado: ESTADO_CON_VISTO_BUENO,
+        visto_bueno_rector: nombre,
+        visto_bueno_por: profile?.id ?? null,
+        visto_bueno_fecha: new Date().toISOString(),
+      })
+      .eq('id', bajaId);
+    setVistoBuenoEnCurso(null);
+    if (error) { toast.error('No se pudo registrar el visto bueno: ' + error.message); return; }
+    toast.success('Visto bueno registrado');
+    loadData();
+  };
 
   const handleSave = async () => {
     if (!form.activo_id || form.activo_id === 'none') { toast.error('Selecciona un activo'); return; }
@@ -110,18 +142,19 @@ export default function BajasPage() {
                     <TableHead className="whitespace-nowrap">Valor</TableHead>
                     <TableHead className="whitespace-nowrap">Motivo</TableHead>
                     <TableHead className="whitespace-nowrap">Descripción</TableHead>
+                    <TableHead className="whitespace-nowrap">Visto bueno</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
                     Array(4).fill(0).map((_, i) => (
                       <TableRow key={i}>
-                        {Array(6).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}
+                        {Array(7).fill(0).map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}
                       </TableRow>
                     ))
                   ) : filtered.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
                         <Trash2 className="h-10 w-10 mx-auto mb-2 opacity-30" />
                         Sin bajas registradas
                       </TableCell>
@@ -137,6 +170,27 @@ export default function BajasPage() {
                           <Badge className="bg-red-100 text-red-800 border-0 text-xs">{b.motivo}</Badge>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[250px] truncate">{b.descripcion || '—'}</TableCell>
+                        <TableCell className="whitespace-nowrap">
+                          {b.estado === ESTADO_CON_VISTO_BUENO ? (
+                            <div className="text-xs">
+                              <Badge className="bg-green-100 text-green-800 border-0 text-xs">
+                                <ShieldCheck className="h-3 w-3 mr-1" /> Visto bueno
+                              </Badge>
+                              <p className="text-muted-foreground mt-0.5">{b.visto_bueno_rector}</p>
+                            </div>
+                          ) : puedeDarVistoBueno ? (
+                            <Button size="sm" variant="outline" className="h-7 text-xs"
+                              disabled={vistoBuenoEnCurso === b.id}
+                              onClick={() => darVistoBueno(b.id)}>
+                              <ShieldCheck className="h-3.5 w-3.5 mr-1" />
+                              {vistoBuenoEnCurso === b.id ? 'Registrando...' : 'Dar visto bueno'}
+                            </Button>
+                          ) : (
+                            <Badge variant="outline" className="text-xs font-normal">
+                              <Clock className="h-3 w-3 mr-1" /> Pendiente
+                            </Badge>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))
                   )}

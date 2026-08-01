@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Package, Building2, AlertTriangle, Calendar, TrendingUp,
-  Users, CheckCircle, Clock, ArrowRight, Activity, CalendarClock
+  Users, CheckCircle, Clock, ArrowRight, Activity, CalendarClock, ShieldCheck
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,8 @@ interface DashboardStats {
   novedadesResueltas: number;
   reservasPendientes: number;
   reservasAprobadas: number;
+  /** Movimientos y bajas que esperan el visto bueno del rector. */
+  vistoBuenoPendiente: number;
 }
 
 export default function DashboardPage() {
@@ -34,6 +36,7 @@ export default function DashboardPage() {
     totalEspacios: 0, espaciosIntervencionesPendientes: 0,
     novedadesPendientes: 0, novedadesResueltas: 0,
     reservasPendientes: 0, reservasAprobadas: 0,
+    vistoBuenoPendiente: 0,
   });
   const [recentNovedades, setRecentNovedades] = useState<{ id: string; numero_radicado: string; tipo_novedad: string; estado: string; created_at: string }[]>([]);
   const [recentReservas, setRecentReservas] = useState<{ id: string; numero_solicitud: string; espacio_nombre: string; estado: string; fecha_inicio: string }[]>([]);
@@ -99,6 +102,8 @@ export default function DashboardPage() {
         { count: novResueltas },
         { count: resPendientes },
         { count: resAprobadas },
+        { data: movPendientes },
+        { count: bajasPendientes },
         { data: novRecientes },
         { data: resRecientes },
         { data: intervAlertas },
@@ -111,6 +116,10 @@ export default function DashboardPage() {
         supabase.from('novedades_incidentes').select('*', { count: 'exact', head: true }).in('estado', ['Resuelto', 'Cerrado']),
         supabase.from('reservas_alquileres').select('*', { count: 'exact', head: true }).in('estado', ['Recibida', 'En revisión']),
         supabase.from('reservas_alquileres').select('*', { count: 'exact', head: true }).in('estado', ['Aprobada', 'Confirmada']),
+        // Un movimiento masivo tiene una fila por activo: se cuentan los lotes
+        // distintos, que es lo que el rector refrenda de una vez.
+        supabase.from('movimientos_activos').select('lote_id').eq('estado', 'Pendiente de visto bueno'),
+        supabase.from('bajas_activos').select('id', { count: 'exact', head: true }).eq('estado', 'Pendiente de visto bueno'),
         supabase.from('novedades_incidentes').select('id, numero_radicado, tipo_novedad, estado, created_at').order('created_at', { ascending: false }).limit(5),
         supabase.from('reservas_alquileres').select('id, numero_solicitud, espacio_id, estado, fecha_inicio').order('created_at', { ascending: false }).limit(5),
         alertasQuery,
@@ -128,6 +137,9 @@ export default function DashboardPage() {
         novedadesPendientes: novPendientes || 0,
         novedadesResueltas: novResueltas || 0,
         reservasPendientes: resPendientes || 0,
+        vistoBuenoPendiente:
+          new Set((Array.isArray(movPendientes) ? movPendientes : []).map(m => m.lote_id)).size +
+          (bajasPendientes || 0),
         reservasAprobadas: resAprobadas || 0,
       });
 
@@ -181,6 +193,17 @@ export default function DashboardPage() {
       icon: Building2, color: 'text-primary', bg: 'bg-primary/10',
       action: () => navigate(isResponsable ? '/panel/espacios/mis-espacios' : '/panel/espacios'),
     },
+    // El rector refrenda movimientos y bajas; a Infraestructura y Administración
+    // les sirve saber qué registros suyos siguen esperando ese visto bueno.
+    ...(['rector', 'admin', 'infraestructura'].includes(profile?.role ?? '') ? [{
+      title: profile?.role === 'rector' ? 'Esperan tu visto bueno' : 'Esperan visto bueno del rector',
+      value: stats.vistoBuenoPendiente,
+      sub: 'Movimientos y bajas de activos',
+      icon: ShieldCheck,
+      color: stats.vistoBuenoPendiente > 0 ? 'text-secondary' : 'text-primary',
+      bg: stats.vistoBuenoPendiente > 0 ? 'bg-secondary/10' : 'bg-primary/10',
+      action: () => navigate('/panel/activos/movimientos?pendientes=1'),
+    }] : []),
     {
       title: 'Novedades Pendientes', value: stats.novedadesPendientes, sub: `${stats.novedadesResueltas} resueltas`,
       icon: AlertTriangle, color: 'text-secondary', bg: 'bg-secondary/10', action: () => navigate('/panel/novedades'),
