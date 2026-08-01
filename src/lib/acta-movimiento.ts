@@ -4,7 +4,7 @@
 // quien aprueba. Comparte encabezado y estilo con el acta de inventario.
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
-import { cargarLogo, slug } from '@/lib/acta-comun';
+import { altoBloqueFirmas, cargarLogo, dibujarFirmas, type FirmaActa, slug } from '@/lib/acta-comun';
 
 /** Nota del reglamento interno aplicable a los traslados. */
 const NOTA_LEGAL =
@@ -32,7 +32,10 @@ export interface ActaMovimientoParams {
   espacioDestino: string;
   personaEntrega: string;
   personaRecibe: string;
+  /** Usuario de Infraestructura o Administración que autoriza el movimiento. */
   personaAprueba: string;
+  /** Rector que da el visto bueno. */
+  vistoBuenoRector: string;
   motivo: string;
   observaciones: string;
   activos: ActivoActa[];
@@ -52,6 +55,7 @@ export async function generarActaMovimientoPDF({
   personaEntrega,
   personaRecibe,
   personaAprueba,
+  vistoBuenoRector,
   motivo,
   observaciones,
   activos,
@@ -190,32 +194,17 @@ export async function generarActaMovimientoPDF({
   y += noteLines.length * 3.6;
 
   // ── Firmas ─────────────────────────────────────────────────────────────
-  ensure(36);
-  y += 18; // espacio para firmar sobre la línea
-  const gap = 8;
-  const colW = (pageW - margin * 2 - gap * 2) / 3;
-  const firmas: { nombre: string; cargo: string }[] = [
+  // Cuatro bloques: quien entrega, quien recibe, quien autoriza el movimiento
+  // y el visto bueno del rector. Se dibujan con el mismo helper que el acta de
+  // inventario para que el pie de firmas sea idéntico entre las dos actas.
+  const firmas: FirmaActa[] = [
     { nombre: personaEntrega, cargo: 'Persona que entrega' },
     { nombre: personaRecibe, cargo: 'Persona que recibe' },
-    { nombre: personaAprueba, cargo: 'Persona que aprueba' },
+    { nombre: personaAprueba, cargo: 'Autoriza el movimiento' },
+    { nombre: vistoBuenoRector, cargo: 'Visto bueno del Rector' },
   ];
-  firmas.forEach((f, i) => {
-    const x = margin + i * (colW + gap);
-    doc.setDrawColor(70, 70, 70);
-    doc.setLineWidth(0.3);
-    doc.line(x, y, x + colW, y);
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(8);
-    if (f.nombre) {
-      doc.setFont('helvetica', 'bold');
-      doc.text(doc.splitTextToSize(f.nombre, colW), x + colW / 2, y + 4, { align: 'center' });
-    }
-    doc.setFont('helvetica', 'normal');
-    doc.text(f.cargo, x + colW / 2, y + (f.nombre ? 8 : 4), { align: 'center' });
-    doc.setTextColor(90, 90, 90);
-    doc.text('C.C.: ____________________', x + colW / 2, y + (f.nombre ? 12 : 8), { align: 'center' });
-    doc.setTextColor(0, 0, 0);
-  });
+  ensure(altoBloqueFirmas(doc, firmas, pageW, margin));
+  y = dibujarFirmas(doc, firmas, pageW, margin, y);
 
   // ── Numeración de páginas ──────────────────────────────────────────────
   const totalPages = doc.getNumberOfPages();

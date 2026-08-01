@@ -71,6 +71,7 @@ interface LoteMovimiento {
   responsable_anterior: string | null;
   responsable_nuevo: string | null;
   aprobado_por: string | null;
+  visto_bueno_rector: string | null;
   motivo: string | null;
   observaciones: string | null;
   activos: ActivoActa[];
@@ -83,7 +84,6 @@ interface MovimientoForm {
   espacio_destino_id: string;
   responsable_anterior: string;
   responsable_nuevo: string;
-  aprobado_por: string;
   fecha_movimiento: string;
   motivo: string;
   observaciones: string;
@@ -92,7 +92,7 @@ interface MovimientoForm {
 const EMPTY_FORM: MovimientoForm = {
   activo_ids: [], tipo_movimiento: 'Traslado',
   espacio_origen_id: SIN_ESPACIO, espacio_destino_id: SIN_ESPACIO,
-  responsable_anterior: '', responsable_nuevo: '', aprobado_por: '',
+  responsable_anterior: '', responsable_nuevo: '',
   fecha_movimiento: new Date().toISOString().slice(0, 10),
   motivo: '', observaciones: '',
 };
@@ -160,7 +160,6 @@ export default function MovimientosPage() {
   const [form, setForm] = useState<MovimientoForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [busquedaActivo, setBusquedaActivo] = useState('');
-  const [soloDelOrigen, setSoloDelOrigen] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -171,7 +170,7 @@ export default function MovimientosPage() {
         supabase
           .from('movimientos_activos')
           .select(`
-            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por,
+            id, lote_id, tipo_movimiento, motivo, observaciones, aprobado_por, visto_bueno_rector,
             fecha_movimiento, created_at,
             responsable_anterior, responsable_nuevo,
             activo:activos_fijos(codigo, nombre, categoria, estado),
@@ -210,6 +209,7 @@ export default function MovimientosPage() {
           responsable_anterior: (fila.responsable_anterior as string) || null,
           responsable_nuevo: (fila.responsable_nuevo as string) || null,
           aprobado_por: (fila.aprobado_por as string) || null,
+          visto_bueno_rector: (fila.visto_bueno_rector as string) || null,
           motivo: (fila.motivo as string) || null,
           observaciones: (fila.observaciones as string) || null,
           activos: [],
@@ -244,9 +244,17 @@ export default function MovimientosPage() {
     return mapa;
   }, [asignaciones, perfiles]);
 
-  /** Usuarios habilitados para aprobar el movimiento. */
-  const aprobadores = useMemo(
-    () => perfiles.filter(p => ROLES_APRUEBAN.includes(p.role) && p.nombre?.trim()),
+  /**
+   * Quien autoriza el movimiento es el usuario autenticado, no una elección:
+   * el acta debe reflejar quién lo registró. Solo Infraestructura y
+   * Administración pueden hacerlo.
+   */
+  const puedeAprobar = ROLES_APRUEBAN.includes(profile?.role ?? '');
+  const nombreAprobador = profile?.nombre?.trim() || '';
+
+  /** Rector vigente, para el visto bueno del acta. */
+  const rector = useMemo(
+    () => perfiles.find(p => p.role === 'rector' && p.nombre?.trim())?.nombre?.trim() || '',
     [perfiles],
   );
 
@@ -261,15 +269,28 @@ export default function MovimientosPage() {
   }, [lotes, search]);
 
   // ─── Selector de activos ─────────────────────────────────────────────────
+  /**
+   * Solo se pueden mover activos que estén en el espacio de origen. La
+   * restricción no es opcional: mover un activo desde un espacio donde no está
+   * es un error de registro, no una preferencia de filtrado.
+   */
   const activosFiltrados = useMemo(() => {
+    if (form.espacio_origen_id === SIN_ESPACIO) return [];
     const q = busquedaActivo.trim().toLowerCase();
-    const filtrarPorOrigen = soloDelOrigen && form.espacio_origen_id !== SIN_ESPACIO;
     return activos.filter(a => {
-      if (filtrarPorOrigen && a.espacio_id !== form.espacio_origen_id) return false;
+      if (a.espacio_id !== form.espacio_origen_id) return false;
       if (!q) return true;
       return a.codigo?.toLowerCase().includes(q) || a.nombre?.toLowerCase().includes(q);
     });
-  }, [activos, busquedaActivo, soloDelOrigen, form.espacio_origen_id]);
+  }, [activos, busquedaActivo, form.espacio_origen_id]);
+
+  /** Activos del espacio de origen, sin aplicar la búsqueda por texto. */
+  const totalEnOrigen = useMemo(
+    () => form.espacio_origen_id === SIN_ESPACIO
+      ? 0
+      : activos.filter(a => a.espacio_id === form.espacio_origen_id).length,
+    [activos, form.espacio_origen_id],
+  );
 
   const seleccionados = useMemo(() => new Set(form.activo_ids), [form.activo_ids]);
   const activosPorId = useMemo(() => new Map(activos.map(a => [a.id, a])), [activos]);
@@ -288,26 +309,33 @@ export default function MovimientosPage() {
   /**
    * Al elegir un espacio, la persona que entrega/recibe se toma de sus
    * responsables asignados: si hay uno solo queda preseleccionado, si hay
-   * varios el usuario escoge. Cambiar el origen reactiva el filtro del
-   * selector, que es lo habitual en un traslado masivo.
+   * varios el usuario escoge.
+   *
+   * Cambiar el origen descarta los activos ya seleccionados que no pertenezcan
+   * al nuevo espacio, para que no se cuele en el movimiento un activo elegido
+   * bajo el origen anterior.
    */
   const cambiarEspacio = (campo: 'origen' | 'destino', valor: string) => {
     const nombres = responsablesPorEspacio.get(valor) ?? [];
     const unico = nombres.length === 1 ? nombres[0] : '';
-    setForm(f => campo === 'origen'
-      ? { ...f, espacio_origen_id: valor, responsable_anterior: unico }
-      : { ...f, espacio_destino_id: valor, responsable_nuevo: unico });
-    if (campo === 'origen') setSoloDelOrigen(valor !== SIN_ESPACIO);
+    if (campo === 'destino') {
+      setForm(f => ({ ...f, espacio_destino_id: valor, responsable_nuevo: unico }));
+      return;
+    }
+    const conservados = form.activo_ids.filter(id => activosPorId.get(id)?.espacio_id === valor);
+    const descartados = form.activo_ids.length - conservados.length;
+    setForm(f => ({ ...f, espacio_origen_id: valor, responsable_anterior: unico, activo_ids: conservados }));
+    setBusquedaActivo('');
+    if (descartados > 0) {
+      toast.info(
+        `Se quitaron ${descartados} activo${descartados !== 1 ? 's' : ''} de la selección por no estar en el espacio de origen`,
+      );
+    }
   };
 
   const abrirDialogo = () => {
-    // Si quien registra puede aprobar, queda preseleccionado; si solo hay un
-    // aprobador posible, se toma ese.
-    const yo = aprobadores.find(p => p.id === profile?.id);
-    const porDefecto = yo ?? (aprobadores.length === 1 ? aprobadores[0] : null);
-    setForm({ ...EMPTY_FORM, aprobado_por: porDefecto?.nombre ?? '' });
+    setForm(EMPTY_FORM);
     setBusquedaActivo('');
-    setSoloDelOrigen(false);
     setDialogOpen(true);
   };
 
@@ -330,6 +358,7 @@ export default function MovimientosPage() {
         personaEntrega: lote.responsable_anterior || '',
         personaRecibe: lote.responsable_nuevo || '',
         personaAprueba: lote.aprobado_por || '',
+        vistoBuenoRector: lote.visto_bueno_rector || '',
         motivo: lote.motivo || '',
         observaciones: lote.observaciones || '',
         activos: lote.activos,
@@ -340,7 +369,17 @@ export default function MovimientosPage() {
   };
 
   const handleSave = async () => {
+    if (!puedeAprobar) { toast.error('Solo Infraestructura o Administración pueden registrar movimientos'); return; }
+    if (form.espacio_origen_id === SIN_ESPACIO) { toast.error('Selecciona el espacio de origen'); return; }
     if (form.activo_ids.length === 0) { toast.error('Selecciona al menos un activo'); return; }
+    // Red de seguridad: la interfaz ya solo ofrece activos del espacio de
+    // origen, pero si el inventario cambió mientras el diálogo estaba abierto
+    // la selección podría haber quedado desfasada.
+    const fueraDeOrigen = form.activo_ids.filter(id => activosPorId.get(id)?.espacio_id !== form.espacio_origen_id);
+    if (fueraDeOrigen.length > 0) {
+      toast.error('Hay activos seleccionados que ya no están en el espacio de origen. Vuelve a elegirlos.');
+      return;
+    }
     if (!form.motivo.trim()) { toast.error('El motivo es obligatorio'); return; }
     if (form.tipo_movimiento === 'Traslado' && form.espacio_destino_id === SIN_ESPACIO) {
       toast.error('Un traslado necesita un espacio de destino');
@@ -356,7 +395,8 @@ export default function MovimientosPage() {
       espacio_destino_id: form.espacio_destino_id === SIN_ESPACIO ? null : form.espacio_destino_id,
       responsable_anterior: form.responsable_anterior || null,
       responsable_nuevo: form.responsable_nuevo || null,
-      aprobado_por: form.aprobado_por || null,
+      aprobado_por: nombreAprobador || null,
+      visto_bueno_rector: rector || null,
       fecha_movimiento: form.fecha_movimiento,
       motivo: form.motivo,
       observaciones: form.observaciones || null,
@@ -419,7 +459,8 @@ export default function MovimientosPage() {
       espacioDestino: etiquetaEspacio(espacios.find(e => e.id === base.espacio_destino_id)),
       personaEntrega: form.responsable_anterior,
       personaRecibe: form.responsable_nuevo,
-      personaAprueba: form.aprobado_por,
+      personaAprueba: nombreAprobador,
+      vistoBuenoRector: rector,
       motivo: form.motivo,
       observaciones: form.observaciones,
       activos: activosActa,
@@ -439,7 +480,11 @@ export default function MovimientosPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Buscar por activo, código, espacio o motivo..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
               </div>
-              <Button onClick={abrirDialogo}>
+              {/* Registrar equivale a autorizar: solo Infraestructura y
+                  Administración. Los demás roles consultan el historial y
+                  descargan actas. */}
+              <Button onClick={abrirDialogo} disabled={!puedeAprobar}
+                title={puedeAprobar ? undefined : 'Solo los usuarios de Infraestructura o Administración pueden registrar movimientos'}>
                 <Plus className="h-4 w-4 mr-1.5" /> Registrar Movimiento
               </Button>
             </div>
@@ -593,18 +638,24 @@ export default function MovimientosPage() {
                 </div>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input className="pl-9" placeholder="Buscar por código o nombre..." value={busquedaActivo} onChange={e => setBusquedaActivo(e.target.value)} />
+                  <Input
+                    className="pl-9"
+                    placeholder="Buscar por código o nombre..."
+                    value={busquedaActivo}
+                    onChange={e => setBusquedaActivo(e.target.value)}
+                    disabled={form.espacio_origen_id === SIN_ESPACIO}
+                  />
                 </div>
-                {form.espacio_origen_id !== SIN_ESPACIO && (
-                  <div className="flex items-center gap-2">
-                    <Checkbox id="solo-del-origen" checked={soloDelOrigen} onCheckedChange={v => setSoloDelOrigen(v === true)} />
-                    <label htmlFor="solo-del-origen" className="text-xs text-muted-foreground cursor-pointer">
-                      Mostrar solo los activos del espacio de origen
-                    </label>
-                  </div>
-                )}
                 <div className="border rounded-md divide-y max-h-56 overflow-y-auto">
-                  {activosFiltrados.length === 0 ? (
+                  {form.espacio_origen_id === SIN_ESPACIO ? (
+                    <p className="text-sm text-muted-foreground text-center py-6 px-4">
+                      Selecciona primero el espacio de origen: solo se pueden mover activos que estén en ese espacio.
+                    </p>
+                  ) : totalEnOrigen === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6 px-4">
+                      El espacio de origen no tiene activos registrados.
+                    </p>
+                  ) : activosFiltrados.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-6">Ningún activo coincide con la búsqueda</p>
                   ) : (
                     activosFiltrados.slice(0, MAX_ACTIVOS_VISIBLES).map(a => (
@@ -629,18 +680,22 @@ export default function MovimientosPage() {
                     ))
                   )}
                 </div>
-                <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
-                  <span className="text-muted-foreground">
-                    {activosFiltrados.length > MAX_ACTIVOS_VISIBLES
-                      ? `Mostrando ${MAX_ACTIVOS_VISIBLES} de ${activosFiltrados.length} resultados — afina la búsqueda para ver el resto`
-                      : `${activosFiltrados.length} resultado${activosFiltrados.length !== 1 ? 's' : ''}`}
-                  </span>
-                  {activosFiltrados.length > 0 && (
-                    <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={seleccionarFiltrados}>
-                      Seleccionar los {activosFiltrados.length} resultados
-                    </Button>
-                  )}
-                </div>
+                {form.espacio_origen_id !== SIN_ESPACIO && totalEnOrigen > 0 && (
+                  <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                    <span className="text-muted-foreground">
+                      {activosFiltrados.length > MAX_ACTIVOS_VISIBLES
+                        ? `Mostrando ${MAX_ACTIVOS_VISIBLES} de ${activosFiltrados.length} — afina la búsqueda para ver el resto`
+                        : busquedaActivo.trim()
+                          ? `${activosFiltrados.length} de ${totalEnOrigen} activos del espacio de origen`
+                          : `${totalEnOrigen} activo${totalEnOrigen !== 1 ? 's' : ''} en el espacio de origen`}
+                    </span>
+                    {activosFiltrados.length > 0 && (
+                      <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={seleccionarFiltrados}>
+                        Seleccionar los {activosFiltrados.length}
+                      </Button>
+                    )}
+                  </div>
+                )}
                 {form.activo_ids.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
                     {/* En un traslado masivo la selección puede ser de cientos de
@@ -686,24 +741,18 @@ export default function MovimientosPage() {
                 onChange={v => setForm(f => ({ ...f, responsable_nuevo: v }))}
               />
 
+              {/* Quien autoriza no se pregunta: es el usuario de la sesión. Se
+                  muestra solo para que quede claro qué nombre llevará el acta. */}
               <div className="md:col-span-2 space-y-2">
-                <Label>Persona que aprueba</Label>
-                {aprobadores.length > 0 ? (
-                  <Select value={form.aprobado_por || undefined} onValueChange={v => setForm(f => ({ ...f, aprobado_por: v }))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccionar aprobador" /></SelectTrigger>
-                    <SelectContent>
-                      {aprobadores.map(p => (
-                        <SelectItem key={p.id} value={p.nombre as string}>
-                          {p.nombre}{p.cargo ? ` — ${p.cargo}` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No hay usuarios con rol de Infraestructura o Administrador para aprobar el movimiento.
-                  </p>
-                )}
+                <Label>Autoriza el movimiento</Label>
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                  {nombreAprobador || 'Tu usuario no tiene nombre configurado'}
+                  {profile?.cargo && <span className="text-muted-foreground"> — {profile.cargo}</span>}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Queda registrado a tu nombre por ser el usuario autenticado.
+                  {rector && ` El acta incluye además el visto bueno del rector (${rector}).`}
+                </p>
               </div>
               <div className="md:col-span-2 space-y-2">
                 <Label>Motivo *</Label>
