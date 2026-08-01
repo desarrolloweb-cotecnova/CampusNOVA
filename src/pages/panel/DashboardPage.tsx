@@ -168,10 +168,13 @@ export default function DashboardPage() {
     }
   };
 
-  // Realtime: recalcula los KPIs y listados cuando cambian reservas, novedades
-  // o intervenciones (las tres tablas publicadas en supabase_realtime).
+  // Realtime: recalcula los KPIs y listados en cuanto otro usuario registra o
+  // refrenda algo, sin que haya que refrescar la pantalla.
   useRealtimeTable(
-    ['reservas_alquileres', 'novedades_incidentes', 'intervenciones'],
+    [
+      'reservas_alquileres', 'novedades_incidentes', 'intervenciones',
+      'activos_fijos', 'movimientos_activos', 'bajas_activos', 'espacios_fisicos',
+    ],
     loadDashboard,
     { enabled: !!profile },
   );

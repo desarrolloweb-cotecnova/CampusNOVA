@@ -20,6 +20,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { DocumentoEspacio, EspacioFisico } from '@/types/types';
 import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -97,6 +98,9 @@ export default function DocumentacionPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable('documentos_espacios', loadData);
 
   // ── Filtrado ──────────────────────────────────────────────────────────────
   const filtered = docs.filter(d => {

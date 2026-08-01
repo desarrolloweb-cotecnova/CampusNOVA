@@ -7,6 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { toast } from 'sonner';
 
 interface EspacioConfig {
@@ -49,6 +50,9 @@ export default function DashboardReservasPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable('reservas_alquileres', loadData);
 
   const update = (id: string, patch: Partial<EspacioConfig>) => {
     setEspacios(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));

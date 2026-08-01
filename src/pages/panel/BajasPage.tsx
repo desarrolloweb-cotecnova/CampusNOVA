@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { useAuth } from '@/contexts/AuthContext';
 import type { ActivoFijo, MotivoBaja } from '@/types/types';
 import { formatDate, formatCurrency } from '@/lib/utils';
@@ -63,6 +64,9 @@ export default function BajasPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable(['bajas_activos', 'activos_fijos'], loadData);
 
   const filtered = bajas.filter(b =>
     !search || [b.activo_nombre, b.activo_codigo, b.motivo].some(f => f?.toLowerCase().includes(search.toLowerCase()))

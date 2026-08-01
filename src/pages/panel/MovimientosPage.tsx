@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatDate } from '@/lib/utils';
 import { fetchAllRows } from '@/lib/supabase-fetch';
@@ -244,6 +245,9 @@ export default function MovimientosPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable(['movimientos_activos', 'activos_fijos'], loadData);
 
   /** Nombres de los responsables asignados a cada espacio. */
   const responsablesPorEspacio = useMemo(() => {

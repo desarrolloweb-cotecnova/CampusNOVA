@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { TrendingDown, AlertCircle, Calendar, Package } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { ActivoFijo } from '@/types/types';
 import { formatCurrency, formatDate, calcularDepreciacion } from '@/lib/utils';
 import { fetchAllRows } from '@/lib/supabase-fetch';
@@ -14,11 +15,7 @@ export default function DepreciacionPage() {
   const [activos, setActivos] = useState<ActivoFijo[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadActivos();
-  }, []);
-
-  const loadActivos = async () => {
+  const loadActivos = useCallback(async () => {
     setLoading(true);
     // Paginado: sin `.range()` PostgREST devolvería solo las primeras 1.000 filas
     // y los totales de depreciación quedarían subestimados.
@@ -33,7 +30,12 @@ export default function DepreciacionPage() {
     );
     setActivos(Array.isArray(data) ? data : []);
     setLoading(false);
-  };
+  }, []);
+
+  useEffect(() => { loadActivos(); }, [loadActivos]);
+
+  // Refresca cuando otro usuario cambia el inventario, sin recargar la pantalla.
+  useRealtimeTable('activos_fijos', loadActivos);
 
   const activosConDep = activos.map(a => ({
     ...a,

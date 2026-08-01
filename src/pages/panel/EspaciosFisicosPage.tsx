@@ -23,6 +23,7 @@ import { Switch } from '@/components/ui/switch';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { SpaceImage } from '@/components/ui/space-image';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { EspacioFisico, EstadoEspacio, TipoEspacio, SedeEspacio, BloqueEspacio } from '@/types/types';
 import { getEstadoColor, formatCurrency } from '@/lib/utils';
 import { exportToExcel, exportToPDF } from '@/lib/export';
@@ -149,6 +150,9 @@ export default function EspaciosFisicosPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable(['espacios_fisicos', 'activos_fijos', 'asignaciones_espacios'], loadData);
 
   // --- Código sugerido: SedeCode-BloqueCode-PisoCode-### ---
   const codigoPrefijo = useMemo(() => {

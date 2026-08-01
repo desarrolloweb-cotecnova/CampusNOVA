@@ -266,7 +266,10 @@ export default function EspacioDetallePage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   // Realtime: refresca la ficha cuando cambian las intervenciones del espacio.
-  useRealtimeTable('intervenciones', loadData);
+  useRealtimeTable(
+    ['intervenciones', 'activos_fijos', 'espacios_fisicos', 'documentos_espacios', 'fotos_espacios', 'asignaciones_espacios'],
+    loadData,
+  );
 
   const openEdit = () => {
     if (!espacio) return;

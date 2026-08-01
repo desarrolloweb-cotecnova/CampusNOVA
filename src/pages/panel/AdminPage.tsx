@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatDateTime } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -106,6 +107,9 @@ export default function AdminPage() {
   useEffect(() => {
     loadUsuarios();
   }, [loadUsuarios]);
+
+  // Refresca cuando otro administrador crea, edita o elimina un usuario.
+  useRealtimeTable(['profiles', 'usuarios_precarga'], loadUsuarios);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
