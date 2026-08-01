@@ -4,6 +4,26 @@
 import type jsPDF from 'jspdf';
 import { LOGO_URL } from '@/lib/assets';
 
+/**
+ * Tamaño de papel de todos los documentos imprimibles: Carta (8,5 × 11 pulgadas
+ * = 215,9 × 279,4 mm), que es el estándar de oficina en Colombia. jsPDF lo
+ * conoce como 'letter'.
+ */
+export const FORMATO_IMPRESION = 'letter' as const;
+
+/**
+ * Reparte el ancho útil de la página entre las columnas de una tabla según los
+ * pesos relativos que se le pasen.
+ *
+ * Se calcula en vez de fijarse en milímetros para que la tabla ocupe el ancho
+ * real del papel: unos anchos pensados para A4 dejarían margen sobrante en
+ * Carta —que es más ancha— y se saldrían de la página en un papel más angosto.
+ */
+export function anchosColumnas(pesos: number[], anchoUtil: number): number[] {
+  const total = pesos.reduce((s, p) => s + p, 0);
+  return pesos.map(p => (p / total) * anchoUtil);
+}
+
 /** Nombre de archivo seguro a partir de un texto libre. */
 export function slug(nombre: string | null, porDefecto = 'documento'): string {
   return (nombre || porDefecto)

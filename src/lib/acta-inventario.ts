@@ -7,7 +7,7 @@
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
 import type { ActivoFijo, EspacioFisico, Profile } from '@/types/types';
-import { altoBloqueFirmas, cargarLogo, dibujarFirmas, type FirmaActa, slug } from '@/lib/acta-comun';
+import { altoBloqueFirmas, anchosColumnas, cargarLogo, dibujarFirmas, FORMATO_IMPRESION, type FirmaActa, slug } from '@/lib/acta-comun';
 
 /** Nota legal del reglamento interno (texto solicitado, literal). */
 const NOTA_LEGAL =
@@ -53,7 +53,7 @@ export async function generarActaInventarioPDF({
   const porEspacio = alcance === 'espacio' && espacios.length === 1;
   const logo = await cargarLogo();
 
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: FORMATO_IMPRESION });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
@@ -179,12 +179,11 @@ export async function generarActaInventarioPDF({
       fontSize: 8, cellPadding: 1.3, overflow: 'linebreak', valign: 'middle',
       textColor: [0, 0, 0], lineColor: [210, 210, 210], lineWidth: 0.1,
     },
-    columnStyles: {
-      0: { cellWidth: 24 },
-      1: { cellWidth: 72 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 58 },
-    },
+    // Proporciones Código / Activo / Estado / Observaciones, repartidas sobre
+    // el ancho real del papel.
+    columnStyles: Object.fromEntries(
+      anchosColumnas([24, 72, 28, 58], pageW - margin * 2).map((w, i) => [i, { cellWidth: w }]),
+    ),
     margin: { left: margin, right: margin, top: headerBottom, bottom: 16 },
     // Repetir el encabezado en cada página de la tabla.
     didDrawPage: drawHeader,

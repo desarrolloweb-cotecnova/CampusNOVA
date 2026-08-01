@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeftRight, Search, Plus, FileText, ChevronDown, ChevronRight, X, ShieldCheck, Clock } from 'lucide-react';
+import { ArrowLeftRight, Search, Plus, FileText, ChevronDown, ChevronRight, X, ShieldCheck, Clock, Lock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -395,6 +395,13 @@ export default function MovimientosPage() {
   };
 
   const handleActa = async (lote: LoteMovimiento) => {
+    // El acta solo existe una vez refrendada. El botón ya está deshabilitado
+    // mientras está pendiente; esto cubre el caso de que el estado cambie
+    // entre el render y el clic.
+    if (lote.estado !== ESTADO_CON_VISTO_BUENO) {
+      toast.info('El acta estará disponible cuando el rector dé el visto bueno al movimiento.');
+      return;
+    }
     try {
       await generarActaMovimientoPDF({
         loteId: lote.lote_id,
@@ -485,34 +492,14 @@ export default function MovimientosPage() {
       }
     }
 
-    const activosActa: ActivoActa[] = form.activo_ids
-      .map(id => activosPorId.get(id))
-      .filter((a): a is ActivoOpcion => Boolean(a))
-      .map(a => ({ codigo: a.codigo, nombre: a.nombre, categoria: a.categoria, estado: a.estado }));
-
     setSaving(false);
     setDialogOpen(false);
+    // El acta no se emite aquí: queda bloqueada hasta que el rector dé el visto
+    // bueno, para que no se imprima un documento que aún no está refrendado.
     toast.success(
-      `Movimiento registrado: ${form.activo_ids.length} activo${form.activo_ids.length !== 1 ? 's' : ''}`,
+      `Movimiento registrado: ${form.activo_ids.length} activo${form.activo_ids.length !== 1 ? 's' : ''}. ` +
+      'El acta quedará disponible cuando el rector dé el visto bueno.',
     );
-
-    // El acta es la constancia del movimiento: se emite de una vez y queda
-    // disponible en el historial para volver a descargarla.
-    await generarActaMovimientoPDF({
-      loteId,
-      tipoMovimiento: form.tipo_movimiento,
-      fechaMovimiento: form.fecha_movimiento,
-      espacioOrigen: etiquetaEspacio(espacios.find(e => e.id === base.espacio_origen_id)),
-      espacioDestino: etiquetaEspacio(espacios.find(e => e.id === base.espacio_destino_id)),
-      personaEntrega: form.responsable_anterior,
-      personaRecibe: form.responsable_nuevo,
-      personaAprueba: nombreAprobador,
-      // Aún sin visto bueno: el acta sale con la línea del rector en blanco.
-      vistoBuenoRector: '',
-      motivo: form.motivo,
-      observaciones: form.observaciones,
-      activos: activosActa,
-    });
 
     loadData();
   };
@@ -639,8 +626,22 @@ export default function MovimientosPage() {
                             )}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-right">
-                            <Button variant="ghost" size="sm" onClick={() => handleActa(l)}>
-                              <FileText className="h-3.5 w-3.5 mr-1" /> Acta
+                            {/* El acta se habilita solo con el visto bueno del
+                                rector: así no se imprime un documento que aún
+                                no está refrendado. */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={l.estado !== ESTADO_CON_VISTO_BUENO}
+                              onClick={() => handleActa(l)}
+                              title={l.estado === ESTADO_CON_VISTO_BUENO
+                                ? 'Descargar el acta del movimiento'
+                                : 'Disponible cuando el rector dé el visto bueno'}
+                            >
+                              {l.estado === ESTADO_CON_VISTO_BUENO
+                                ? <FileText className="h-3.5 w-3.5 mr-1" />
+                                : <Lock className="h-3.5 w-3.5 mr-1" />}
+                              Acta
                             </Button>
                           </TableCell>
                         </TableRow>,
@@ -834,8 +835,8 @@ export default function MovimientosPage() {
                 <p className="text-xs text-muted-foreground">
                   Queda registrado a tu nombre por ser el usuario autenticado.
                   {rector
-                    ? ` El movimiento quedará pendiente del visto bueno del rector (${rector}), que lo completa desde esta misma página.`
-                    : ' El movimiento quedará pendiente del visto bueno del rector.'}
+                    ? ` El movimiento quedará pendiente del visto bueno del rector (${rector}); el acta se habilita cuando lo dé.`
+                    : ' El movimiento quedará pendiente del visto bueno del rector; el acta se habilita cuando lo dé.'}
                 </p>
               </div>
               <div className="md:col-span-2 space-y-2">
@@ -850,7 +851,7 @@ export default function MovimientosPage() {
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
               <Button onClick={handleSave} disabled={saving}>
-                {saving ? 'Guardando...' : `Registrar y generar acta${form.activo_ids.length > 0 ? ` (${form.activo_ids.length})` : ''}`}
+                {saving ? 'Guardando...' : `Registrar movimiento${form.activo_ids.length > 0 ? ` (${form.activo_ids.length})` : ''}`}
               </Button>
             </div>
           </DialogContent>

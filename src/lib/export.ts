@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { FORMATO_IMPRESION } from '@/lib/acta-comun';
 
 // Exportar a Excel
 export function exportToExcel(
@@ -22,7 +23,8 @@ export function exportToPDF(
   filename: string,
   columnStyles?: Record<number, object>
 ) {
-  const doc = new jsPDF({ orientation: 'landscape' });
+  // Carta apaisada: mismo papel que las actas (ver FORMATO_IMPRESION).
+  const doc = new jsPDF({ orientation: 'landscape', format: FORMATO_IMPRESION });
 
   // Encabezado
   doc.setFillColor(0, 96, 47); // #00602F
