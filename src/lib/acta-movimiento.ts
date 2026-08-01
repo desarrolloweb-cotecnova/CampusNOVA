@@ -4,7 +4,7 @@
 // quien aprueba. Comparte encabezado y estilo con el acta de inventario.
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
-import { altoBloqueFirmas, cargarLogo, dibujarFirmas, type FirmaActa, slug } from '@/lib/acta-comun';
+import { altoBloqueFirmas, anchosColumnas, cargarLogo, dibujarFirmas, FORMATO_IMPRESION, type FirmaActa, slug } from '@/lib/acta-comun';
 
 /** Nota del reglamento interno aplicable a los traslados. */
 const NOTA_LEGAL =
@@ -62,7 +62,7 @@ export async function generarActaMovimientoPDF({
 }: ActaMovimientoParams): Promise<void> {
   const logo = await cargarLogo();
 
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: FORMATO_IMPRESION });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
@@ -150,13 +150,13 @@ export async function generarActaMovimientoPDF({
       fontSize: 8, cellPadding: 1.3, overflow: 'linebreak', valign: 'middle',
       textColor: [0, 0, 0], lineColor: [210, 210, 210], lineWidth: 0.1,
     },
-    columnStyles: {
-      0: { cellWidth: 10, halign: 'right' },
-      1: { cellWidth: 24 },
-      2: { cellWidth: 74 },
-      3: { cellWidth: 44 },
-      4: { cellWidth: 30 },
-    },
+    // Proporciones # / Código / Activo / Categoría / Estado, repartidas sobre
+    // el ancho real del papel.
+    columnStyles: Object.fromEntries(
+      anchosColumnas([10, 24, 74, 44, 30], pageW - margin * 2).map((w, i) => [
+        i, i === 0 ? { cellWidth: w, halign: 'right' } : { cellWidth: w },
+      ]),
+    ),
     margin: { left: margin, right: margin, top: headerBottom, bottom: 16 },
     didDrawPage: drawHeader,
   });
