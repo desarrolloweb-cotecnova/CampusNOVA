@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { toast } from 'sonner';
 
 type CatConCodigoTable = 'sedes_espacios' | 'bloques_espacios' | 'tipos_espacios' | 'pisos_espacios';
@@ -45,6 +46,9 @@ function CatalogoCRUDConCodigo({
   }, [table]);
 
   useEffect(() => { load(); }, [load]);
+
+  // El catálogo que se está editando se refresca solo si otro usuario lo cambia.
+  useRealtimeTable(table, load);
 
   const openCreate = () => { setEditing(null); setForm({ codigo: '', nombre: '', activo: true }); setDialogOpen(true); };
   const openEdit = (item: CatConCodigo) => { setEditing(item); setForm({ codigo: item.codigo, nombre: item.nombre, activo: item.activo }); setDialogOpen(true); };
@@ -227,6 +231,9 @@ function CatalogoSimpleCRUD({
   }, [table]);
 
   useEffect(() => { load(); }, [load]);
+
+  // El catálogo que se está editando se refresca solo si otro usuario lo cambia.
+  useRealtimeTable(table, load);
 
   const openCreate = () => { setEditing(null); setForm({ nombre: '', activo: true }); setDialogOpen(true); };
   const openEdit = (item: CatSimple) => { setEditing(item); setForm({ nombre: item.nombre, activo: item.activo }); setDialogOpen(true); };

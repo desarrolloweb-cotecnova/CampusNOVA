@@ -340,7 +340,10 @@ export default function MisEspaciosPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   // Realtime: refresca cuando cambian las intervenciones de los espacios.
-  useRealtimeTable('intervenciones', loadData);
+  useRealtimeTable(
+    ['intervenciones', 'activos_fijos', 'espacios_fisicos', 'documentos_espacios', 'fotos_espacios', 'asignaciones_espacios'],
+    loadData,
+  );
 
   // ── Acta de Inventario del espacio (PDF por responsable) ──────────────────
   // Un acta por espacio y responsable: lista solo los activos que están a su

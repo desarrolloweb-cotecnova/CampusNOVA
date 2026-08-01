@@ -22,6 +22,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import type { ActivoFijo, EspacioFisico, EstadoActivo } from '@/types/types';
 import { formatCurrency, formatDate, getEstadoColor } from '@/lib/utils';
 import { fetchAllRows } from '@/lib/supabase-fetch';
@@ -125,6 +126,9 @@ export default function ActivosFijosPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable(['activos_fijos', 'espacios_fisicos', 'categorias_activos', 'estados_activos', 'responsables_activos', 'proveedores_activos'], loadData);
 
   const filtered = activos.filter(a => {
     const matchSearch = !searchTerm || [a.codigo, a.nombre, a.categoria, a.responsable].some(

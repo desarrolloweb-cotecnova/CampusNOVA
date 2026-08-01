@@ -20,6 +20,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { AppLayout } from '@/components/layouts/AppLayout';
 import { supabase } from '@/db/supabase';
+import { useRealtimeTable } from '@/hooks/use-realtime-table';
 import { formatDate } from '@/lib/utils';
 import { toast } from 'sonner';
 import { exportToPDF } from '@/lib/export';
@@ -83,6 +84,9 @@ export default function ResponsablesPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Refresca cuando otro usuario cambia los datos, sin recargar la pantalla.
+  useRealtimeTable(['profiles', 'asignaciones_espacios'], loadData);
 
   // ─── Asignar espacio ─────────────────────────────────────────────────────────
   const openAsignar = (perfil: Profile) => {
