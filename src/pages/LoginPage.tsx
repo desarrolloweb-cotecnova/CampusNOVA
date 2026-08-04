@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { LOGO_URL } from '@/lib/assets';
+import { SESSION_EXPIRED_PARAM, SESSION_MAX_HOURS } from '@/lib/session-policy';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
@@ -19,6 +20,13 @@ export default function LoginPage() {
     }
     if (searchParams.get('error') === 'domain') {
       toast.error('Solo se permite el acceso con cuentas @cotecnova.edu.co.');
+    }
+    if (searchParams.get(SESSION_EXPIRED_PARAM) === '1') {
+      toast.info(
+        `Tu sesión caducó. Por seguridad dura como máximo ${SESSION_MAX_HOURS} ` +
+        'horas, así que hay que iniciar sesión de nuevo cada día.',
+        { duration: 10000 },
+      );
     }
   }, [searchParams]);
 
