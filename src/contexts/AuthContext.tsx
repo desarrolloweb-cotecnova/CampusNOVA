@@ -1,10 +1,18 @@
-import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 // @ts-ignore
 import { supabase } from '@/db/supabase';
 import type { User } from '@supabase/supabase-js';
 // @ts-ignore
 import type { Profile, UserRole } from '@/types/types';
 import { toast } from 'sonner';
+import { useSessionExpiry } from '@/hooks/use-session-expiry';
+import {
+  SESSION_EXPIRED_PARAM,
+  SESSION_MAX_HOURS,
+  clearStoredStart,
+  getSessionExpiry,
+  isSessionExpired,
+} from '@/lib/session-policy';
 
 export async function getProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
@@ -52,6 +60,11 @@ interface AuthContextType {
   isAdmin: boolean;
   /** true si puede acceder al módulo de configuración */
   canConfigure: boolean;
+  /**
+   * Momento (epoch ms) en que caduca la sesión y habrá que volver a iniciarla;
+   * null si no hay sesión. Ver `SESSION_MAX_HOURS` en lib/session-policy.
+   */
+  sessionExpiresAt: number | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -60,10 +73,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
 
   // Ref para evitar actualizaciones duplicadas cuando onAuthStateChange
   // se dispara varias veces para el mismo usuario (SIGNED_IN + TOKEN_REFRESHED)
   const currentUserIdRef = useRef<string | null>(null);
+
+  // Evita que la expulsión por caducidad se dispare dos veces (temporizador y
+  // comprobación al recuperar el foco pueden coincidir).
+  const expiringRef = useRef(false);
+
+  /**
+   * Cierra la sesión caducada y devuelve al usuario a /login.
+   *
+   * Se recarga la página en lugar de navegar con el router: así no queda en
+   * memoria ningún dato del panel de la sesión anterior.
+   */
+  const expireSession = useCallback(async () => {
+    if (expiringRef.current) return;
+    expiringRef.current = true;
+
+    currentUserIdRef.current = null;
+    clearStoredStart();
+    await supabase.auth.signOut();
+
+    window.location.replace(`/login?${SESSION_EXPIRED_PARAM}=1`);
+  }, []);
+
+  useSessionExpiry(user, expireSession);
 
   const refreshProfile = async () => {
     if (!user) {
@@ -83,6 +120,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       (_event, session) => {
         const sessionUser: User | null = session?.user ?? null;
         const newId = sessionUser?.id ?? null;
+
+        // Sesión que supera la ventana máxima (p. ej. una pestaña que quedó
+        // abierta desde ayer): se cierra antes de dar acceso a nada. Va antes
+        // del filtro de disparos duplicados para cubrir también los
+        // TOKEN_REFRESHED que llegan al despertar el equipo.
+        if (sessionUser && isSessionExpired(sessionUser)) {
+          void expireSession();
+          return;
+        }
 
         // Ignorar disparos duplicados para el mismo usuario
         // (TOKEN_REFRESHED, USER_UPDATED, etc. no deben forzar re-render)
@@ -107,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         setUser(sessionUser);
+        setSessionExpiresAt(sessionUser ? getSessionExpiry(sessionUser) : null);
 
         if (sessionUser) {
           // Cargar perfil; crear si es el primer login con Google
@@ -194,9 +241,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     currentUserIdRef.current = null;
+    clearStoredStart();
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
+    setSessionExpiresAt(null);
   };
 
   const isAdmin = profile?.role === 'admin' || profile?.role === 'rector';
@@ -206,7 +255,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider value={{
       user, profile, loading,
       signInWithUsername, signUpWithUsername, signInWithGoogle,
-      signOut, refreshProfile, isAdmin, canConfigure,
+      signOut, refreshProfile, isAdmin, canConfigure, sessionExpiresAt,
     }}>
       {children}
     </AuthContext.Provider>
