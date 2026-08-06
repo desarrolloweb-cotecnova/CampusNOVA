@@ -137,6 +137,17 @@ export function getCloudinaryFull(url: string): string {
   return url.replace('/upload/', '/upload/q_auto,f_auto/');
 }
 
+/**
+ * Versión para incrustar en un acta PDF. Fuerza JPEG (`f_jpg`) en lugar de
+ * `f_auto`: jsPDF no sabe leer WEBP ni AVIF, que es lo que Cloudinary entregaría
+ * a un navegador moderno. El ancho se acota porque en el papel la foto no pasa
+ * de unos 85 mm y subir más resolución solo engorda el archivo.
+ */
+export function getCloudinaryActa(url: string): string {
+  if (!url) return '';
+  return url.replace('/upload/', '/upload/w_900,c_limit,q_auto,f_jpg/');
+}
+
 export function getCloudinaryAvatar(url: string): string {
   if (!url) return '';
   return url.replace('/upload/', '/upload/w_200,h_200,c_fill,g_face,q_auto,f_auto/');

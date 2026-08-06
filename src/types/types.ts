@@ -192,6 +192,8 @@ export interface BajaActivo {
   responsable_activo: string | null;
   /** Nombre de quien registró la baja, congelado para el acta. */
   realizada_por: string | null;
+  /** Foto de evidencia de la baja, alojada en Cloudinary como las demás. */
+  foto_evidencia_url: string | null;
   registrado_por: string | null;
   /** 'Pendiente de visto bueno' hasta que el rector la refrenda. */
   estado: string;

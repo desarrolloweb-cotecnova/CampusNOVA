@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Search, Trash2, ShieldCheck, Clock, FileText, Lock, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { Plus, Search, Trash2, ShieldCheck, Clock, FileText, Lock, ChevronDown, ChevronRight, X, Upload, Image } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ import type { MotivoBaja } from '@/types/types';
 import { formatDate, formatCurrency } from '@/lib/utils';
 import { fetchAllRows } from '@/lib/supabase-fetch';
 import { generarActaBajaPDF, type ActivoActaBaja } from '@/lib/acta-baja';
+import { uploadImageToCloudinary, getCloudinaryFull, getCloudinaryThumbnail } from '@/lib/cloudinary';
 import { toast } from 'sonner';
 
 const MOTIVOS: MotivoBaja[] = ['Deterioro', 'Robo', 'Obsolescencia', 'Donación', 'Otro'];
@@ -41,6 +42,9 @@ const MAX_CHIPS_SELECCION = 30;
 
 /** Tamaño de bloque para insertar y actualizar en lotes grandes. */
 const BLOQUE_ESCRITURA = 500;
+
+/** Tope del archivo de evidencia antes de comprimir, en bytes. */
+const MAX_FOTO_BYTES = 10 * 1024 * 1024;
 
 interface ActivoOpcion {
   id: string;
@@ -81,6 +85,7 @@ interface LoteBaja {
   estado: string;
   visto_bueno_rector: string | null;
   visto_bueno_fecha: string | null;
+  foto_evidencia_url: string | null;
   activos: ActivoActaBaja[];
 }
 
@@ -91,11 +96,13 @@ interface BajaForm {
   responsable_activo: string;
   fecha_baja: string;
   descripcion: string;
+  foto_evidencia_url: string;
 }
 
 const EMPTY_FORM: BajaForm = {
   activo_ids: [], espacio_id: '', motivo: 'Deterioro', responsable_activo: '',
   fecha_baja: new Date().toISOString().slice(0, 10), descripcion: '',
+  foto_evidencia_url: '',
 };
 
 /** Divide una lista en bloques para no enviar una petición desmedida. */
@@ -125,6 +132,7 @@ export default function BajasPage() {
   const [form, setForm] = useState<BajaForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [busquedaActivo, setBusquedaActivo] = useState('');
+  const [subiendoFoto, setSubiendoFoto] = useState(false);
   const [vistoBuenoEnCurso, setVistoBuenoEnCurso] = useState<string | null>(null);
   // Se puede llegar con ?pendientes=1 para ver solo lo que espera el visto
   // bueno del rector.
@@ -142,7 +150,7 @@ export default function BajasPage() {
           .select(`
             id, lote_id, motivo, descripcion, fecha_baja, created_at,
             estado, visto_bueno_rector, visto_bueno_fecha,
-            responsable_activo, realizada_por,
+            responsable_activo, realizada_por, foto_evidencia_url,
             activo:activos_fijos(codigo, nombre, categoria, valor),
             espacio:espacios_fisicos(codigo, nombre)
           `)
@@ -181,6 +189,7 @@ export default function BajasPage() {
           estado: (fila.estado as string) || ESTADO_PENDIENTE,
           visto_bueno_rector: (fila.visto_bueno_rector as string) || null,
           visto_bueno_fecha: (fila.visto_bueno_fecha as string) || null,
+          foto_evidencia_url: (fila.foto_evidencia_url as string) || null,
           activos: [],
         };
         porLote.set(loteId, lote);
@@ -345,6 +354,25 @@ export default function BajasPage() {
     setDialogOpen(true);
   };
 
+  /**
+   * Evidencia de la baja. Va al mismo repositorio de imágenes que las fotos de
+   * los espacios, los activos y las novedades: `uploadImageToCloudinary`
+   * comprime en el cliente antes de subir, así que una foto tomada con el móvil
+   * no satura la conexión.
+   */
+  const subirEvidencia = async (file: File) => {
+    if (file.size > MAX_FOTO_BYTES) { toast.error('La imagen no puede superar 10 MB'); return; }
+    setSubiendoFoto(true);
+    try {
+      const url = await uploadImageToCloudinary(file);
+      setForm(f => ({ ...f, foto_evidencia_url: url }));
+      toast.success('Evidencia cargada');
+    } catch (err) {
+      toast.error('Error al subir la evidencia: ' + (err as Error).message);
+    }
+    setSubiendoFoto(false);
+  };
+
   const toggleExpandido = (loteId: string) => {
     setExpandidos(prev => {
       const next = new Set(prev);
@@ -394,6 +422,7 @@ export default function BajasPage() {
         realizaBaja: lote.realizada_por || '',
         vistoBuenoRector: lote.visto_bueno_rector || '',
         descripcion: lote.descripcion || '',
+        fotoEvidenciaUrl: lote.foto_evidencia_url,
         activos: lote.activos,
       });
     } catch (err) {
@@ -417,6 +446,9 @@ export default function BajasPage() {
       return;
     }
     if (!form.responsable_activo.trim()) { toast.error('Indica quién es el responsable de los activos'); return; }
+    // La foto es la evidencia de la baja: sin ella el acta queda sin respaldo.
+    if (!form.foto_evidencia_url) { toast.error('Adjunta la foto de evidencia de la baja'); return; }
+    if (subiendoFoto) { toast.error('Espera a que termine de subir la evidencia'); return; }
 
     setSaving(true);
     const loteId = crypto.randomUUID();
@@ -428,6 +460,7 @@ export default function BajasPage() {
       espacio_id: form.espacio_id === ESPACIO_SIN_ASIGNAR ? null : form.espacio_id,
       responsable_activo: form.responsable_activo.trim(),
       realizada_por: nombreRegistra || null,
+      foto_evidencia_url: form.foto_evidencia_url,
       estado: ESTADO_PENDIENTE,
       registrado_por: profile?.id ?? null,
     };
@@ -605,6 +638,20 @@ export default function BajasPage() {
                           <TableRow key={`${l.lote_id}-detalle`} className="bg-muted/30 hover:bg-muted/30">
                             <TableCell colSpan={9} className="py-3">
                               {l.descripcion && <p className="text-xs mb-2"><span className="font-medium">Descripción:</span> {l.descripcion}</p>}
+                              {/* La evidencia solo sirve si se puede consultar:
+                                  miniatura que abre la foto completa. */}
+                              {l.foto_evidencia_url && (
+                                <div className="mb-3">
+                                  <p className="text-xs font-medium mb-1">Evidencia:</p>
+                                  <a href={getCloudinaryFull(l.foto_evidencia_url)} target="_blank" rel="noreferrer">
+                                    <img
+                                      src={getCloudinaryThumbnail(l.foto_evidencia_url)}
+                                      alt="Evidencia de la baja"
+                                      className="h-24 w-24 object-cover rounded-lg border border-border hover:opacity-90"
+                                    />
+                                  </a>
+                                </div>
+                              )}
                               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
                                 {l.activos.map((a, i) => (
                                   <p key={`${a.codigo}-${i}`} className="text-xs">
@@ -792,6 +839,53 @@ export default function BajasPage() {
                 <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
                   {nombreRegistra || 'Tu usuario no tiene nombre configurado'}
                   {profile?.cargo && <span className="text-muted-foreground"> — {profile.cargo}</span>}
+                </div>
+              </div>
+
+              {/* Evidencia gráfica: obligatoria, porque es lo que respalda el
+                  acta ante un tercero. Se guarda en el mismo repositorio de
+                  imágenes que las fotos de los espacios. */}
+              <div className="md:col-span-2 space-y-2">
+                <Label>Foto de evidencia *</Label>
+                <div className="flex items-center gap-3">
+                  {form.foto_evidencia_url ? (
+                    <div className="relative">
+                      <img
+                        src={getCloudinaryThumbnail(form.foto_evidencia_url)}
+                        alt="Evidencia de la baja"
+                        className="h-20 w-20 object-cover rounded-lg border border-border"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Quitar la evidencia"
+                        onClick={() => setForm(f => ({ ...f, foto_evidencia_url: '' }))}
+                        className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-destructive text-white text-xs flex items-center justify-center"
+                      >×</button>
+                    </div>
+                  ) : (
+                    <div className="h-20 w-20 rounded-lg border border-dashed border-border flex items-center justify-center bg-muted">
+                      <Image className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div>
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) subirEvidencia(f); e.target.value = ''; }}
+                      />
+                      <Button type="button" variant="outline" size="sm" disabled={subiendoFoto} asChild>
+                        <span>
+                          <Upload className="h-3.5 w-3.5 mr-1.5" />
+                          {subiendoFoto ? 'Subiendo...' : form.foto_evidencia_url ? 'Cambiar foto' : 'Subir foto'}
+                        </span>
+                      </Button>
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Estado en que quedan los activos. JPG, PNG o WEBP · máx 10 MB
+                    </p>
+                  </div>
                 </div>
               </div>
 
