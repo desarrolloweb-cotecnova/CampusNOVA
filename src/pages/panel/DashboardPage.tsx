@@ -103,7 +103,7 @@ export default function DashboardPage() {
         { count: resPendientes },
         { count: resAprobadas },
         { data: movPendientes },
-        { count: bajasPendientes },
+        { data: bajasPendientes },
         { data: novRecientes },
         { data: resRecientes },
         { data: intervAlertas },
@@ -119,7 +119,9 @@ export default function DashboardPage() {
         // Un movimiento masivo tiene una fila por activo: se cuentan los lotes
         // distintos, que es lo que el rector refrenda de una vez.
         supabase.from('movimientos_activos').select('lote_id').eq('estado', 'Pendiente de visto bueno'),
-        supabase.from('bajas_activos').select('id', { count: 'exact', head: true }).eq('estado', 'Pendiente de visto bueno'),
+        // Las bajas también se registran por lote: se cuentan los lotes, no las
+        // filas, para no inflar el pendiente con cada activo del mismo acta.
+        supabase.from('bajas_activos').select('lote_id').eq('estado', 'Pendiente de visto bueno'),
         supabase.from('novedades_incidentes').select('id, numero_radicado, tipo_novedad, estado, created_at').order('created_at', { ascending: false }).limit(5),
         supabase.from('reservas_alquileres').select('id, numero_solicitud, espacio_id, estado, fecha_inicio').order('created_at', { ascending: false }).limit(5),
         alertasQuery,
@@ -139,7 +141,7 @@ export default function DashboardPage() {
         reservasPendientes: resPendientes || 0,
         vistoBuenoPendiente:
           new Set((Array.isArray(movPendientes) ? movPendientes : []).map(m => m.lote_id)).size +
-          (bajasPendientes || 0),
+          new Set((Array.isArray(bajasPendientes) ? bajasPendientes : []).map(b => b.lote_id)).size,
         reservasAprobadas: resAprobadas || 0,
       });
 
