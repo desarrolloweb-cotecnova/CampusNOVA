@@ -62,6 +62,41 @@ export async function cargarLogo(): Promise<{ dataUrl: string; ratio: number } |
   }
 }
 
+/**
+ * Descarga una imagen remota y la devuelve como dataURL junto con su relación
+ * de aspecto, lista para `doc.addImage`.
+ *
+ * Se baja con `fetch` y se convierte con FileReader en vez de dibujarla en un
+ * canvas: pasar por canvas lo mancharía (`tainted`) cuando la imagen viene de
+ * otro dominio y `toDataURL` fallaría. Devuelve null ante cualquier problema
+ * —red, CORS, formato ilegible— para que el acta se genere igual sin la foto.
+ */
+export async function cargarImagenRemota(
+  url: string,
+): Promise<{ dataUrl: string; ratio: number } | null> {
+  try {
+    if (!url || typeof document === 'undefined') return null;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = dataUrl;
+    await img.decode();
+    const w = img.naturalWidth || 1;
+    const h = img.naturalHeight || 1;
+    return { dataUrl, ratio: w / h };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Bloque de firmas ────────────────────────────────────────────────────────
 // Compartido por todas las actas para que el pie de firmas sea idéntico en
 // todas: línea, nombre en negrita cuando se conoce, y cargo debajo.

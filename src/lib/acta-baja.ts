@@ -5,8 +5,13 @@
 // Comparte encabezado, tabla y pie de firmas con el acta de movimiento.
 import jsPDF from 'jspdf';
 import autoTable, { type RowInput } from 'jspdf-autotable';
-import { altoBloqueFirmas, anchosColumnas, cargarLogo, dibujarFirmas, FORMATO_IMPRESION, type FirmaActa, slug } from '@/lib/acta-comun';
+import { altoBloqueFirmas, anchosColumnas, cargarImagenRemota, cargarLogo, dibujarFirmas, FORMATO_IMPRESION, type FirmaActa, slug } from '@/lib/acta-comun';
+import { getCloudinaryActa } from '@/lib/cloudinary';
 import { formatCurrency } from '@/lib/utils';
+
+/** Tamaño máximo de la foto de evidencia dentro del acta, en mm. */
+const FOTO_ANCHO_MAX = 85;
+const FOTO_ALTO_MAX = 65;
 
 /** Nota del reglamento interno aplicable a las bajas. */
 const NOTA_LEGAL =
@@ -41,6 +46,8 @@ export interface ActaBajaParams {
   /** Rector que da el visto bueno. */
   vistoBuenoRector: string;
   descripcion: string;
+  /** Foto que evidencia el estado de los activos; se incrusta en el acta. */
+  fotoEvidenciaUrl?: string | null;
   activos: ActivoActaBaja[];
 }
 
@@ -58,9 +65,15 @@ export async function generarActaBajaPDF({
   realizaBaja,
   vistoBuenoRector,
   descripcion,
+  fotoEvidenciaUrl,
   activos,
 }: ActaBajaParams): Promise<void> {
-  const logo = await cargarLogo();
+  // La evidencia se descarga en paralelo con el logo: son dos peticiones
+  // independientes y así el acta no tarda el doble.
+  const [logo, evidencia] = await Promise.all([
+    cargarLogo(),
+    fotoEvidenciaUrl ? cargarImagenRemota(getCloudinaryActa(fotoEvidenciaUrl)) : Promise.resolve(null),
+  ]);
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: FORMATO_IMPRESION });
   const pageW = doc.internal.pageSize.getWidth();
@@ -184,6 +197,41 @@ export async function generarActaBajaPDF({
   doc.text(`Total de activos dados de baja: ${activos.length}`, pageW - margin, y, { align: 'right' });
   y += 4.6;
   doc.text(`Valor total dado de baja: ${formatCurrency(valorTotal)}`, pageW - margin, y, { align: 'right' });
+
+  // ── Evidencia del estado de los activos ────────────────────────────────
+  // La foto es lo que sustenta la baja ante un tercero, así que va en el acta
+  // firmada y no solo en el sistema. Si no se pudo descargar, se deja
+  // constancia del enlace para que el acta no calle que existe una evidencia.
+  if (evidencia) {
+    const anchoFoto = Math.min(FOTO_ANCHO_MAX, FOTO_ALTO_MAX * evidencia.ratio);
+    const altoFoto = anchoFoto / evidencia.ratio;
+    ensure(10 + altoFoto);
+    y += 8;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Evidencia del estado de los activos:', margin, y);
+    y += 3;
+    doc.addImage(evidencia.dataUrl, 'JPEG', margin, y, anchoFoto, altoFoto);
+    // Marco tenue para que la foto se lea como un adjunto del acta y no como
+    // parte del fondo de la página.
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.2);
+    doc.rect(margin, y, anchoFoto, altoFoto);
+    y += altoFoto;
+  } else if (fotoEvidenciaUrl) {
+    const enlace = doc.setFontSize(8).splitTextToSize(
+      `Evidencia registrada en el sistema: ${fotoEvidenciaUrl}`,
+      pageW - margin * 2,
+    );
+    ensure(8 + enlace.length * 3.6);
+    y += 8;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+    doc.text(enlace, margin, y);
+    y += enlace.length * 3.6;
+  }
 
   // ── Nota legal ─────────────────────────────────────────────────────────
   const noteLines = doc.setFontSize(8).splitTextToSize(NOTA_LEGAL, pageW - margin * 2);

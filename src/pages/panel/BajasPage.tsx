@@ -422,6 +422,7 @@ export default function BajasPage() {
         realizaBaja: lote.realizada_por || '',
         vistoBuenoRector: lote.visto_bueno_rector || '',
         descripcion: lote.descripcion || '',
+        fotoEvidenciaUrl: lote.foto_evidencia_url,
         activos: lote.activos,
       });
     } catch (err) {
