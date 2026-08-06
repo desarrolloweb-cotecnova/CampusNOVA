@@ -22,8 +22,13 @@ import { toast } from 'sonner';
 
 const TIPOS_MOVIMIENTO = ['Traslado', 'Préstamo', 'Cambio de responsable', 'Mantenimiento', 'Retiro temporal', 'Otro'];
 
-/** Roles habilitados para aprobar un movimiento de activos. */
-const ROLES_APRUEBAN = ['infraestructura', 'admin'];
+/**
+ * Roles habilitados para registrar y autorizar un movimiento de activos.
+ * Coincide con lo que permite la RLS de `movimientos_activos`: el rector no
+ * suele registrar movimientos, pero conserva el acceso para poder hacerlo y
+ * revisar el formulario.
+ */
+const ROLES_APRUEBAN = ['infraestructura', 'admin', 'rector', 'rectoria'];
 
 /** Filas del selector que se pintan a la vez; el resto se acota con la búsqueda. */
 const MAX_ACTIVOS_VISIBLES = 100;
@@ -423,7 +428,7 @@ export default function MovimientosPage() {
   };
 
   const handleSave = async () => {
-    if (!puedeAprobar) { toast.error('Solo Infraestructura o Administración pueden registrar movimientos'); return; }
+    if (!puedeAprobar) { toast.error('Tu rol no permite registrar movimientos de activos'); return; }
     if (form.espacio_origen_id === SIN_ESPACIO) { toast.error('Selecciona el espacio de origen'); return; }
     if (form.activo_ids.length === 0) { toast.error('Selecciona al menos un activo'); return; }
     // Red de seguridad: la interfaz ya solo ofrece activos del espacio de
@@ -515,11 +520,10 @@ export default function MovimientosPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input placeholder="Buscar por activo, código, espacio o motivo..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
               </div>
-              {/* Registrar equivale a autorizar: solo Infraestructura y
-                  Administración. Los demás roles consultan el historial y
-                  descargan actas. */}
+              {/* Registrar equivale a autorizar. Los roles sin permiso de
+                  escritura consultan el historial y descargan actas. */}
               <Button onClick={abrirDialogo} disabled={!puedeAprobar}
-                title={puedeAprobar ? undefined : 'Solo los usuarios de Infraestructura o Administración pueden registrar movimientos'}>
+                title={puedeAprobar ? undefined : 'Tu rol no permite registrar movimientos de activos'}>
                 <Plus className="h-4 w-4 mr-1.5" /> Registrar Movimiento
               </Button>
             </div>

@@ -180,10 +180,18 @@ export interface MovimientoActivo {
 export interface BajaActivo {
   id: string;
   activo_id: string;
+  /** Agrupa los activos dados de baja juntos: una sola baja, una sola acta. */
+  lote_id: string;
   motivo: MotivoBaja;
   fecha_baja: string;
   descripcion: string | null;
   acta_pdf_url: string | null;
+  /** Espacio donde estaban los activos al darlos de baja. */
+  espacio_id: string | null;
+  /** Nombre de quien tenía los activos a cargo, congelado para el acta. */
+  responsable_activo: string | null;
+  /** Nombre de quien registró la baja, congelado para el acta. */
+  realizada_por: string | null;
   registrado_por: string | null;
   /** 'Pendiente de visto bueno' hasta que el rector la refrenda. */
   estado: string;
