@@ -6,6 +6,7 @@ import {
   Search, UserCheck, ShieldCheck
 } from 'lucide-react';
 import { AlertasMantenimiento } from '@/components/common/AlertasMantenimiento';
+import { SessionExpiryNotice } from '@/components/common/SessionExpiryNotice';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';
@@ -332,6 +333,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                       {ROLE_LABELS[profile?.role ?? ''] ?? 'Usuario'}
                     </span>
                   </div>
+                  <SessionExpiryNotice className="px-4 pb-3" />
                   <DropdownMenuSeparator className="my-0" />
                   <DropdownMenuItem onClick={() => navigate('/panel/perfil')} className="px-4 py-2.5">
                     <User className="h-4 w-4 mr-2 text-muted-foreground" /> Mi perfil
