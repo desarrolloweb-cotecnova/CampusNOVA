@@ -30,6 +30,7 @@ const CalendarioReservasPage = lazy(() => import('./pages/panel/CalendarioReserv
 const ConfiguracionPage = lazy(() => import('./pages/panel/ConfiguracionPage'));
 const PerfilPage = lazy(() => import('./pages/panel/PerfilPage'));
 const SeguridadPage = lazy(() => import('./pages/panel/SeguridadPage'));
+const AlmacenPage = lazy(() => import('./pages/panel/AlmacenPage'));
 
 export interface RouteConfig {
   name: string;
@@ -82,6 +83,9 @@ export const routes: RouteConfig[] = [
   { name: 'Administración', path: '/panel/admin', element: <AdminPage /> },
   { name: 'Usuarios', path: '/panel/admin/usuarios', element: <AdminPage /> },
   { name: 'Catálogos', path: '/panel/admin/catalogos', element: <AdminPage /> },
+
+  // Módulo 7 — Almacén (kardex de insumos, solo administradores)
+  { name: 'Almacén', path: '/panel/almacen', element: <AlmacenPage /> },
 
   // Perfil de usuario
   { name: 'Mi Perfil', path: '/panel/perfil', element: <PerfilPage /> },

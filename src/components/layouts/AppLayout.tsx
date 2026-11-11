@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, Building2, AlertTriangle, Calendar,
   Settings, User, LogOut, Menu, X, ChevronDown, ChevronRight,
-  Search, UserCheck, ShieldCheck
+  Search, UserCheck, ShieldCheck, Warehouse
 } from 'lucide-react';
 import { AlertasMantenimiento } from '@/components/common/AlertasMantenimiento';
 import { Button } from '@/components/ui/button';
@@ -92,6 +92,12 @@ const navItems: NavItem[] = [
       { label: 'Calendario', path: '/panel/reservas/calendario' },
       { label: 'Panel', path: '/panel/reservas/dashboard' },
     ],
+  },
+  {
+    label: 'Almacén',
+    path: '/panel/almacen',
+    icon: Warehouse,
+    roles: ['admin'],
   },
   {
     label: 'Configuración',
@@ -272,6 +278,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     if (path.startsWith('/panel/admin/usuarios')) return 'Gestión de Usuarios';
     if (path.startsWith('/panel/admin/catalogos')) return 'Catálogos';
     if (path.startsWith('/panel/admin/configuracion')) return 'Configuración';
+    if (path.startsWith('/panel/almacen')) return 'Almacén — Kardex';
     if (path.startsWith('/panel/perfil')) return 'Mi Perfil';
     return 'CampusNOVA';
   };

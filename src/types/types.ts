@@ -384,3 +384,46 @@ export interface Proveedor {
   activo: boolean;
   created_at: string;
 }
+
+// ─── Módulo Almacén (kardex de insumos) ──────────────────────────────────────
+
+export type TipoMovimientoAlmacen = 'entrada' | 'salida';
+
+export interface BodegaAlmacen {
+  id: string;
+  codigo: string;
+  nombre: string;
+  activo: boolean;
+  created_at: string;
+}
+
+export interface ProductoAlmacen {
+  id: string;
+  codigo: string;
+  nombre: string;
+  categoria: string;
+  unidad_medida: string;
+  stock_minimo: number;
+  descripcion: string | null;
+  activo: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MovimientoAlmacen {
+  id: string;
+  bodega_id: string;
+  producto_id: string;
+  tipo: TipoMovimientoAlmacen;
+  fecha: string;
+  cantidad: number;
+  costo_unitario: number | null;
+  concepto: string;
+  documento: string | null;
+  tercero: string | null;
+  observaciones: string | null;
+  lote_id: string;
+  registrado_por: string | null;
+  registrado_por_nombre: string | null;
+  created_at: string;
+}
