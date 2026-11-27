@@ -77,11 +77,15 @@ function AlmacenContenido() {
   const { profile } = useAuth();
   const elaboradoPor = profile?.nombre?.trim() || profile?.email || '';
 
-  const [bodegas, setBodegas] = useState<BodegaAlmacen[]>([]);
+  // Todas las bodegas (también las inactivas) para la pestaña Bodegas; el
+  // selector y el registro de movimientos solo usan las activas.
+  const [todasBodegas, setTodasBodegas] = useState<BodegaAlmacen[]>([]);
+  const bodegas = useMemo(() => todasBodegas.filter(b => b.activo), [todasBodegas]);
   const [bodegaId, setBodegaId] = useState<string>('');
   const [productos, setProductos] = useState<ProductoAlmacen[]>([]);
   const [movimientos, setMovimientos] = useState<MovimientoAlmacen[]>([]);
   const [loading, setLoading] = useState(true);
+  const [catalogosCargados, setCatalogosCargados] = useState(false);
   const [tab, setTab] = useState('saldos');
 
   // Diálogo de movimiento
@@ -93,16 +97,20 @@ function AlmacenContenido() {
 
   const loadCatalogos = useCallback(async () => {
     const [{ data: bods, error: e1 }, { data: prods, error: e2 }] = await Promise.all([
-      supabase.from('almacen_bodegas').select('*').eq('activo', true).order('nombre'),
+      supabase.from('almacen_bodegas').select('*').order('nombre'),
       fetchAllRows<ProductoAlmacen>(() => supabase.from('almacen_productos').select('*').order('codigo').order('id')),
     ]);
     if (e1 || e2) {
       toast.error('No se pudo cargar el almacén', { description: (e1 || e2)?.message });
     }
     const lista = (bods ?? []) as BodegaAlmacen[];
-    setBodegas(lista);
+    const activas = lista.filter(b => b.activo);
+    setTodasBodegas(lista);
     setProductos(prods);
-    setBodegaId(actual => (actual && lista.some(b => b.id === actual) ? actual : lista[0]?.id ?? ''));
+    setBodegaId(actual => (actual && activas.some(b => b.id === actual) ? actual : activas[0]?.id ?? ''));
+    // Sin bodegas no se puede cargar el kardex: se abre directo donde se crean.
+    if (activas.length === 0) setTab('bodegas');
+    setCatalogosCargados(true);
   }, []);
 
   const loadMovimientos = useCallback(async () => {
@@ -124,7 +132,7 @@ function AlmacenContenido() {
 
   useEffect(() => { loadCatalogos(); }, [loadCatalogos]);
   useEffect(() => { loadMovimientos(); }, [loadMovimientos]);
-  useRealtimeTable('almacen_productos', loadCatalogos);
+  useRealtimeTable(['almacen_bodegas', 'almacen_productos'], loadCatalogos);
   useRealtimeTable('almacen_movimientos', loadMovimientos);
 
   const movsPorProducto = useMemo(() => agruparPorProducto(movimientos), [movimientos]);
@@ -178,22 +186,28 @@ function AlmacenContenido() {
             {b.nombre}
           </button>
         ))}
-        {bodegas.length === 0 && !loading && (
+        {bodegas.length === 0 && catalogosCargados && (
           <p className="text-sm text-muted-foreground">
-            No hay bodegas configuradas. Verifica que se haya aplicado la migración del módulo Almacén.
+            No hay bodegas activas. Créalas en la pestaña <b>Bodegas</b> para empezar a cargar el kardex.
           </p>
         )}
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex flex-wrap h-auto gap-1 p-1">
+          <TabsTrigger value="bodegas" className="gap-1.5"><Warehouse className="h-3.5 w-3.5" /> Bodegas</TabsTrigger>
           <TabsTrigger value="saldos" className="gap-1.5"><Boxes className="h-3.5 w-3.5" /> Saldos</TabsTrigger>
           <TabsTrigger value="kardex" className="gap-1.5"><ClipboardList className="h-3.5 w-3.5" /> Kardex</TabsTrigger>
           <TabsTrigger value="movimientos" className="gap-1.5"><History className="h-3.5 w-3.5" /> Movimientos</TabsTrigger>
           <TabsTrigger value="productos" className="gap-1.5"><FileText className="h-3.5 w-3.5" /> Productos</TabsTrigger>
         </TabsList>
 
+        <TabsContent value="bodegas" className="mt-4">
+          <BodegasTab bodegas={todasBodegas} onChange={loadCatalogos} />
+        </TabsContent>
+
         <TabsContent value="saldos" className="mt-4">
+          {!bodega && catalogosCargados && <SinBodega />}
           {bodega && (
             <SaldosTab
               bodega={bodega}
@@ -207,6 +221,7 @@ function AlmacenContenido() {
         </TabsContent>
 
         <TabsContent value="kardex" className="mt-4">
+          {!bodega && catalogosCargados && <SinBodega />}
           {bodega && (
             <KardexTab
               bodega={bodega}
@@ -240,6 +255,184 @@ function AlmacenContenido() {
         />
       )}
     </div>
+  );
+}
+
+// ─── Bodegas ─────────────────────────────────────────────────────────────────
+
+function SinBodega() {
+  return (
+    <Card className="shadow-card">
+      <CardContent className="py-10 text-center text-sm text-muted-foreground">
+        Crea o activa una bodega en la pestaña <b>Bodegas</b> para ver sus saldos y su kardex.
+      </CardContent>
+    </Card>
+  );
+}
+
+interface BodegaForm {
+  codigo: string;
+  nombre: string;
+  activo: boolean;
+}
+
+const BODEGA_VACIA: BodegaForm = { codigo: '', nombre: '', activo: true };
+
+function BodegasTab({ bodegas, onChange }: { bodegas: BodegaAlmacen[]; onChange: () => void }) {
+  const [editing, setEditing] = useState<BodegaAlmacen | null>(null);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<BodegaForm>(BODEGA_VACIA);
+  const [saving, setSaving] = useState(false);
+  const [deleteItem, setDeleteItem] = useState<BodegaAlmacen | null>(null);
+
+  const abrirNueva = () => { setEditing(null); setForm(BODEGA_VACIA); setOpen(true); };
+  const abrirEditar = (b: BodegaAlmacen) => {
+    setEditing(b);
+    setForm({ codigo: b.codigo, nombre: b.nombre, activo: b.activo });
+    setOpen(true);
+  };
+
+  const guardar = async () => {
+    const codigo = form.codigo.trim().toUpperCase();
+    const nombre = form.nombre.trim();
+    if (!codigo || !nombre) { toast.error('El código y el nombre son obligatorios'); return; }
+    const datos = { codigo, nombre, activo: form.activo };
+    setSaving(true);
+    const { error } = editing
+      ? await supabase.from('almacen_bodegas').update(datos).eq('id', editing.id)
+      : await supabase.from('almacen_bodegas').insert(datos);
+    setSaving(false);
+    if (error) {
+      const dup = error.code === '23505';
+      toast.error(dup ? `Ya existe una bodega con el código ${codigo}` : 'No se pudo guardar la bodega', {
+        description: dup ? undefined : error.message,
+      });
+      return;
+    }
+    toast.success(editing ? 'Bodega actualizada' : 'Bodega creada');
+    setOpen(false);
+    onChange();
+  };
+
+  const eliminar = async () => {
+    if (!deleteItem) return;
+    const { error } = await supabase.from('almacen_bodegas').delete().eq('id', deleteItem.id);
+    if (error) {
+      toast.error('No se pudo eliminar', {
+        description: error.code === '23503'
+          ? 'La bodega tiene movimientos en el kardex. Desactívala en lugar de eliminarla.'
+          : error.message,
+      });
+    } else {
+      toast.success('Bodega eliminada');
+      onChange();
+    }
+    setDeleteItem(null);
+  };
+
+  return (
+    <>
+      <Card className="shadow-card">
+        <CardHeader className="pb-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">Bodegas</CardTitle>
+              <CardDescription className="text-xs mt-0.5 text-pretty">
+                Ubicaciones donde se guardan los insumos. Cada bodega lleva su propio kardex.
+                Una bodega inactiva conserva su historia, pero no aparece para registrar movimientos.
+              </CardDescription>
+            </div>
+            <Button size="sm" onClick={abrirNueva} className="h-9 shrink-0">
+              <Plus className="h-4 w-4 mr-1.5" /> Nueva bodega
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Código</TableHead>
+                  <TableHead>Nombre</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {bodegas.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                      Aún no hay bodegas. Crea la primera con el botón «Nueva bodega».
+                    </TableCell>
+                  </TableRow>
+                ) : bodegas.map(b => (
+                  <TableRow key={b.id}>
+                    <TableCell className="font-mono text-xs">{b.codigo}</TableCell>
+                    <TableCell className="font-medium">{b.nombre}</TableCell>
+                    <TableCell>
+                      <Badge variant={b.activo ? 'default' : 'secondary'} className="text-xs">{b.activo ? 'Activa' : 'Inactiva'}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => abrirEditar(b)} title="Editar">
+                        <Edit className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => setDeleteItem(b)} title="Eliminar">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Editar bodega' : 'Nueva bodega'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <Label>Código</Label>
+                <Input value={form.codigo} onChange={e => setForm(f => ({ ...f, codigo: e.target.value }))} placeholder="BOD-REC" />
+              </div>
+              <div className="space-y-1.5 col-span-2">
+                <Label>Nombre</Label>
+                <Input value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} placeholder="Bodega Rectoría" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between border rounded-lg px-3 py-2.5">
+              <Label>Activa</Label>
+              <Switch checked={form.activo} onCheckedChange={v => setForm(f => ({ ...f, activo: v }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
+            <Button onClick={guardar} disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteItem} onOpenChange={o => { if (!o) setDeleteItem(null); }}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar {deleteItem?.nombre}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Solo se pueden eliminar bodegas sin movimientos. Si ya tiene historia en el kardex, desactívala.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={eliminar} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
