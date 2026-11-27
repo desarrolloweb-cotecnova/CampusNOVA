@@ -1,4 +1,4 @@
-// Módulo Almacén — Kardex de insumos de las bodegas (exclusivo de administradores).
+// Módulo Almacén — Kardex de insumos de las bodegas (administradores y rector).
 //
 // El administrador registra a mano las entradas y salidas de cada bodega; el
 // saldo, el costo promedio y el kardex se calculan a partir de esos
@@ -66,7 +66,7 @@ function EstadoStock({ saldo, minimo }: { saldo: number; minimo: number }) {
 export default function AlmacenPage() {
   return (
     <AppLayout>
-      <RoleGuard allowedRoles={['admin']}>
+      <RoleGuard allowedRoles={['admin', 'rector']}>
         <AlmacenContenido />
       </RoleGuard>
     </AppLayout>
