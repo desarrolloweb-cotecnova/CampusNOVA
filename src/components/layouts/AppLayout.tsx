@@ -98,7 +98,7 @@ const navItems: NavItem[] = [
     label: 'Almacén',
     path: '/panel/almacen',
     icon: Warehouse,
-    roles: ['admin'],
+    roles: ['admin', 'rector'],
   },
   {
     label: 'Configuración',

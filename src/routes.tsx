@@ -84,7 +84,7 @@ export const routes: RouteConfig[] = [
   { name: 'Usuarios', path: '/panel/admin/usuarios', element: <AdminPage /> },
   { name: 'Catálogos', path: '/panel/admin/catalogos', element: <AdminPage /> },
 
-  // Módulo 7 — Almacén (kardex de insumos, solo administradores)
+  // Módulo 7 — Almacén (kardex de insumos, administradores y rector)
   { name: 'Almacén', path: '/panel/almacen', element: <AlmacenPage /> },
 
   // Perfil de usuario
