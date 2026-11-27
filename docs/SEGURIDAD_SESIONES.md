@@ -32,6 +32,7 @@ factor.
 | `src/hooks/use-session-expiry.ts` | Vigilancia: temporizador + recomprobación al recuperar el foco o la visibilidad de la pestaña. |
 | `src/contexts/AuthContext.tsx` | Aplica la expulsión y expone `sessionExpiresAt`. |
 | `src/pages/LoginPage.tsx` | Mensaje al usuario expulsado por caducidad. |
+| `src/components/common/SessionExpiryNotice.tsx` | Muestra en el menú de perfil a qué hora vence la sesión. |
 
 ### De dónde sale la hora de inicio
 
@@ -47,6 +48,13 @@ Un único valor, en `src/lib/session-policy.ts`:
 ```ts
 export const SESSION_MAX_HOURS = 8;
 ```
+
+## Cómo comprobar que está activa
+
+Abre el menú de perfil (arriba a la derecha): debajo del rol aparece «Tu sesión
+vence a las HH:MM». Esa línea sale del mismo cálculo que ejecuta la expulsión,
+así que si se ve, la política está activa. En la última hora pasa a cuenta
+atrás y cambia de color.
 
 ## Refuerzo del lado del servidor (recomendado)
 
